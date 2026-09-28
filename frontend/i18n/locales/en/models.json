@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "title": "Model Marketplace",
+    "description": "All AI models supported by Youtiao API: text chat, image generation, video generation. Transparent pricing, pay as you go."
+  },
+  "hero": {
+    "badge": "Pay-as-you-go · Transparent pricing · Unified protocol",
+    "titlePrefix": "Model",
+    "titleSuffix": " Marketplace",
+    "subtitle": "Top text, image and video models in one place. One Key for all.",
+    "tag1": "Text · Image · Video coverage",
+    "tag2": "OpenAI-compatible protocol"
+  },
+  "category": {
+    "all": "All",
+    "text": "Text Chat",
+    "image": "Image Generation",
+    "video": "Video Generation"
+  },
+  "search": {
+    "placeholder": "Search model name / description"
+  },
+  "provider": {
+    "all": "All"
+  },
+  "price": {
+    "usageBased": "Usage-based",
+    "perMillionTokens": "/M tokens",
+    "perImage": "/image",
+    "perSecond": "/sec",
+    "perCall": "/call",
+    "per1MTokens": "/1M tokens",
+    "input": "Input",
+    "cached": "Cached",
+    "output": "Output",
+    "featured": "Featured",
+    "coverAlt": "{{name}} generation preview",
+    "zoomAlt": "Zoom in"
+  },
+  "empty": {
+    "noModels": "No models available",
+    "noMatch": "No matching models found. Try a different keyword."
+  },
+  "detail": {
+    "copyName": "Copy model name",
+    "close": "Close",
+    "pricing": "Pricing",
+    "example": "Example",
+    "parameters": "Parameters",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyJson": "Copy JSON",
+    "fieldCount": "{{count}} fields",
+    "usageBased": "Usage-based",
+    "standard": "Standard",
+    "defaultTier": "Default pricing tier",
+    "usageBasedDesc": "Billed by actual usage",
+    "notConfigured": "Not configured",
+    "perSec": "/ sec",
+    "expand": "Show all sizes",
+    "collapse": "Collapse",
+    "perUsage": "Usage",
+    "perMToken": " / 1M Token",
+    "freeQuota": "First {{count}} free",
+    "optionalValues": "Values",
+    "characters": "chars",
+    "maxItems": "Max {{count}} items"
+  }
+}

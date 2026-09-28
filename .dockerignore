@@ -1,0 +1,13 @@
+.env
+backend/.env
+.git
+.pytest_cache
+.trae
+.venv
+__pycache__
+*.py[cod]
+media
+celerybeat-schedule
+frontend/node_modules
+frontend/.next
+frontend/out

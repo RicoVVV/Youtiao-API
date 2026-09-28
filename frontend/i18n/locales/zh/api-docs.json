@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "title": "调用文档",
+    "description": "平台全部模型的调用文档：按能力、模型族、模型逐级浏览接口，查看方法与路径、请求参数、请求体契约、响应说明与错误码。"
+  },
+  "hero": {
+    "badge": "API 文档",
+    "title": "调用文档",
+    "subtitle": "按能力 → 模型族 → 模型 → 接口浏览全部调用契约，含请求参数、请求体、响应与错误码说明。"
+  },
+  "sidebar": {
+    "title": "接口目录",
+    "unknownFamily": "未分组"
+  },
+  "loading": "加载中…",
+  "empty": {
+    "loadFailed": "文档目录加载失败，请稍后重试",
+    "detailFailed": "文档详情加载失败，请稍后重试",
+    "noSelection": "请在左侧选择接口"
+  },
+  "detail": {
+    "auth": "鉴权方式",
+    "pathParams": "路径参数",
+    "queryParams": "查询参数",
+    "requestBody": "请求体",
+    "notes": "说明",
+    "example": "请求示例",
+    "exampleModelHint": "示例中的 model 为示例值，真实可用的模型名以 GET /v1/models 为准。",
+    "taskStatus": "任务状态",
+    "statusName": "状态",
+    "statusDesc": "说明",
+    "paramName": "参数",
+    "paramDesc": "说明",
+    "copy": "复制",
+    "copied": "已复制",
+    "material": "素材上传：{{categories}}{{multiple}}",
+    "materialMultiple": "，多值",
+    "characters": "字符",
+    "minLength": "至少 {{count}} 字符",
+    "maxItems": "最多 {{count}} 项",
+    "optionalValues": "可选值",
+    "streamRequest": "流式（由请求体 stream 决定）",
+    "streamAlways": "流式响应",
+    "unregistered": "该端点尚未登记文档说明，仅展示路径。"
+  }
+}

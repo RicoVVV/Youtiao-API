@@ -1,0 +1,98 @@
+{
+  "hero": {
+    "badge": "30+ top models integrated · Video / Image / Text",
+    "titleLine1": "Unified API Gateway for",
+    "titleHighlight": "Massive AI Models",
+    "subtitle": "Youtiao API aggregates the world's top video, image, and text models: unified protocol, pay-as-you-go, intelligent routing. One line of code to access all AI capabilities.",
+    "ctaPrimary": "Get Started Free",
+    "ctaSecondary": "Browse Model Marketplace"
+  },
+  "stats": {
+    "title": "Live Stats",
+    "todayCalls": "Today's API Calls",
+    "onlineModels": "Online Models",
+    "avgLatency": "Avg Response Latency",
+    "unitCalls": "",
+    "unitModels": "",
+    "unitMs": "ms"
+  },
+  "features": {
+    "title": "Why Choose Youtiao API",
+    "subtitle": "Infrastructure built for developers — stable, transparent, hassle-free.",
+    "items": [
+      {
+        "title": "One Key for All Models",
+        "description": "Aggregate top text, image, and video models like GPT, Claude, Sora, Flux. Unified protocol — just change the baseURL to integrate."
+      },
+      {
+        "title": "Stable & Fast",
+        "description": "Multi-channel intelligent scheduling with automatic peak distribution. Long tasks async + Webhook callbacks, no pressure under high concurrency."
+      },
+      {
+        "title": "Pay-as-You-Go",
+        "description": "Precise billing by tokens, images, or duration. Every consumption is trackable in real time, costs at a glance."
+      },
+      {
+        "title": "Secure & Reliable",
+        "description": "Key-level permission and quota management. Full-link encryption for request data. Sensitive info auto-cleansed upon expiry."
+      }
+    ]
+  },
+  "quickstart": {
+    "title": "Three-Step Integration",
+    "subtitle": "No need to modify existing code. Compatible with OpenAI SDK.",
+    "stepLabel": "STEP {{number}}",
+    "steps": [
+      {
+        "title": "Create Account",
+        "description": "Register in 30 seconds. New users get free trial credits for all models."
+      },
+      {
+        "title": "Create API Key",
+        "description": "Generate sk-xxx keys in the console. Manage multiple keys per project."
+      },
+      {
+        "title": "Make a Call",
+        "description": "POST a prompt — chat responds instantly, generation tasks callback asynchronously."
+      }
+    ],
+    "codeHeader": "One SDK for text, image, and video",
+    "codeCommentCreate": "# Create in Youtiao API console",
+    "codeCommentBaseUrl": "# Change here",
+    "codeCommentChat": "# Text: chat responds instantly",
+    "codeCommentImage": "# Image: text-to-image, synchronous",
+    "codeCommentVideo": "# Video: async task, poll or Webhook callback",
+    "codePromptChat": "Write a tagline",
+    "codePromptImage": "A Shiba Inu under a cherry blossom tree, healing illustration style",
+    "codePromptVideo": "A Shiba Inu running under a cherry blossom tree, cinematic camera movement"
+  },
+  "cta": {
+    "title": "Start Generating for Free",
+    "subtitle": "Free trial credits on signup. No payment method required.",
+    "button": "Sign Up Now"
+  },
+  "auth": {
+    "enterConsole": "Go to Console",
+    "login": "Log In",
+    "register": "Sign Up Free",
+    "logout": "Log Out",
+    "logoutSuccess": "Logged out",
+    "profile": "Profile",
+    "wallet": "Wallet",
+    "systemSettings": "System Settings",
+    "admin": "Admin",
+    "user": "User",
+    "accountMenu": "Account menu"
+  },
+  "nav": {
+    "home": "Home",
+    "models": "Models",
+    "docs": "API Docs",
+    "console": "Console"
+  },
+  "footer": {
+    "models": "Models",
+    "console": "Console",
+    "login": "Log In"
+  }
+}

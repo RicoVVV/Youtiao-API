@@ -1,0 +1,98 @@
+{
+  "hero": {
+    "badge": "已接入 30+ 顶级模型 · 视频 / 图像 / 文本",
+    "titleLine1": "统一API网关，服务于",
+    "titleHighlight": "海量AI模型",
+    "subtitle": "Youtiao API 聚合全球顶级视频、图像与文本模型：统一协议、按量计费、智能调度，一行代码接入全部 AI 能力。",
+    "ctaPrimary": "免费开始",
+    "ctaSecondary": "浏览模型广场"
+  },
+  "stats": {
+    "title": "实时数据",
+    "todayCalls": "今日 API 调用",
+    "onlineModels": "在线模型",
+    "avgLatency": "平均响应延迟",
+    "unitCalls": "次",
+    "unitModels": "个",
+    "unitMs": "ms"
+  },
+  "features": {
+    "title": "为什么选择 Youtiao API",
+    "subtitle": "为开发者打造的中转基础设施，稳定、透明、省心。",
+    "items": [
+      {
+        "title": "一个 Key 调全部模型",
+        "description": "聚合 GPT、Claude、Sora、Flux 等顶级文本、图像、视频模型，统一协议，改一行 baseURL 即可接入。"
+      },
+      {
+        "title": "稳定且高速",
+        "description": "多通道智能调度，高峰自动分流；长任务异步 + Webhook 回调，高并发无压力。"
+      },
+      {
+        "title": "按量计费",
+        "description": "Token、张数、时长按实际用量精确计费，每笔消耗实时可查，成本一目了然。"
+      },
+      {
+        "title": "安全可靠",
+        "description": "Key 粒度权限与额度管理，请求数据全链路加密，敏感信息过期自动清理。"
+      }
+    ]
+  },
+  "quickstart": {
+    "title": "三步接入",
+    "subtitle": "无需改造现有代码，兼容 OpenAI SDK。",
+    "stepLabel": "STEP {{number}}",
+    "steps": [
+      {
+        "title": "注册账号",
+        "description": "30 秒完成注册，新用户即赠全模型体验额度。"
+      },
+      {
+        "title": "创建 API Key",
+        "description": "控制台一键生成 sk-xxx 密钥，支持多 Key 分项目管理。"
+      },
+      {
+        "title": "发起调用",
+        "description": "POST 一个 prompt，对话即时响应，生成任务异步回调。"
+      }
+    ],
+    "codeHeader": "一套 SDK，文本 / 图像 / 视频全打通",
+    "codeCommentCreate": "# Youtiao API 控制台创建",
+    "codeCommentBaseUrl": "# 改这里",
+    "codeCommentChat": "# 文本：对话即时返回",
+    "codeCommentImage": "# 图像：文生图，同步返回",
+    "codeCommentVideo": "# 视频：异步任务，轮询或 Webhook 回调取成片",
+    "codePromptChat": "写一句广告词",
+    "codePromptImage": "樱花树下的柴犬，治愈系插画",
+    "codePromptVideo": "一只柴犬在樱花树下奔跑，电影感运镜"
+  },
+  "cta": {
+    "title": "现在开始，免费生成",
+    "subtitle": "注册即送体验额度，无需绑定支付方式。",
+    "button": "立即注册"
+  },
+  "auth": {
+    "enterConsole": "进入控制台",
+    "login": "登录",
+    "register": "免费注册",
+    "logout": "退出登录",
+    "logoutSuccess": "已退出登录",
+    "profile": "个人资料",
+    "wallet": "钱包",
+    "systemSettings": "系统设置",
+    "admin": "管理员",
+    "user": "普通用户",
+    "accountMenu": "账户菜单"
+  },
+  "nav": {
+    "home": "主页",
+    "models": "模型广场",
+    "docs": "调用文档",
+    "console": "控制台"
+  },
+  "footer": {
+    "models": "模型广场",
+    "console": "控制台",
+    "login": "登录"
+  }
+}
