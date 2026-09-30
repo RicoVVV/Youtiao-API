@@ -150,13 +150,22 @@ export class ApiError extends Error {
   data: unknown;
   /** 请求关联标识 */
   requestId?: string;
+  /** 429 限流时响应头 Retry-After 的秒数（无该头时为 undefined） */
+  retryAfter?: number;
 
-  constructor(message: string, status: number, data: unknown, requestId?: string) {
+  constructor(
+    message: string,
+    status: number,
+    data: unknown,
+    requestId?: string,
+    retryAfter?: number
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.data = data;
     this.requestId = requestId;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -294,7 +303,9 @@ async function request<T>(
       pickErrorMessage(data, `请求失败: ${res.status}`),
       res.status,
       data,
-      typeof requestId === "string" && requestId ? requestId : undefined
+      typeof requestId === "string" && requestId ? requestId : undefined,
+      // 429 限流可能带 Retry-After（秒），供调用方做冷却倒计时
+      Number(res.headers.get("Retry-After")) || undefined
     );
   }
   // 204 No Content 等空响应

@@ -25,7 +25,7 @@ router = APIRouter(prefix="/admin/user", tags=["管理员用户与令牌"])
 def create_user(
     payload: AdminUserCreateRequest, session: Annotated[Session, Depends(get_db)]
 ) -> AdminUserCreateResponse:
-    result = AuthApplicationService(session).register_user(**payload.model_dump())
+    result = AuthApplicationService(session).register_user(**payload.model_dump(), skip_email_verification=True)
     return AdminUserCreateResponse(user_id=result.user.id, username=result.user.username)
 
 

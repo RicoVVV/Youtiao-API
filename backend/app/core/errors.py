@@ -27,6 +27,10 @@ class AuthenticationError(ApplicationError):
     pass
 
 
+class AuthenticationProviderUnavailableError(ApplicationError):
+    """第三方身份验证配置缺失或服务暂时不可用，客户端可稍后重试。"""
+
+
 class ConflictError(ApplicationError):
     pass
 

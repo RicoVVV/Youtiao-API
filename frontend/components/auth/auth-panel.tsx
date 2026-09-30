@@ -9,6 +9,7 @@ import {
   EyeOff,
   Loader2,
   Lock,
+  Mail,
   User,
 } from "lucide-react";
 
@@ -16,7 +17,8 @@ import { SiteLogo } from "@/components/site-logo";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { post, setToken, getToken, setCachedUsername } from "@/lib/request";
+import { post, setToken, getToken, setCachedUsername, ApiError } from "@/lib/request";
+import { usePublicSystemSettings } from "@/lib/use-system-settings";
 import { cn } from "@/lib/utils";
 import { toast } from "../ui/toaster";
 import { useLocale } from "@/i18n/client";
@@ -24,6 +26,10 @@ import { LocaleLink } from "@/components/locale-link";
 import { useTranslation } from "react-i18next";
 
 type Mode = "login" | "register";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** 注册验证码同邮箱发送冷却（秒），与服务端限制一致 */
+const RESEND_COOLDOWN = 60;
 
 const floatingChips = [
   { label: "minimax-h3", className: "left-[12%] top-[18%]", delay: "0s", rotate: "-6deg" },
@@ -99,9 +105,17 @@ export function AuthPanel() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [email, setEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [sendCodeStatus, setSendCodeStatus] = useState<"idle" | "sending">("idle");
+  const [resendIn, setResendIn] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success">("idle");
   const [error, setError] = useState("");
+
+  // 公开系统设置：email_verification_enabled 决定注册是否展示邮箱与验证码
+  const settings = usePublicSystemSettings();
+  const emailVerificationEnabled = settings?.email_verification_enabled ?? false;
 
   // 登录成功后的目标页：仅允许站内路径，防开放重定向
   const redirectParam = searchParams.get("redirect");
@@ -122,7 +136,41 @@ export function AuthPanel() {
 
   const switchMode = (next: Mode) => {
     setError("");
+    // 切换登录/注册时清空邮箱验证相关状态，避免串用
+    setEmail("");
+    setEmailCode("");
+    setResendIn(0);
     router.replace(next === "register" ? `/${locale}/login?mode=register` : `/${locale}/login`);
+  };
+
+  // 验证码重发倒计时
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
+
+  // 发送注册邮箱验证码（仅注册模式且开关开启时可用）
+  const onSendEmailCode = async () => {
+    setError("");
+    const value = email.trim();
+    if (!EMAIL_RE.test(value)) {
+      setError(t("invalidEmail"));
+      return;
+    }
+    setSendCodeStatus("sending");
+    try {
+      await post("/auth/email-verification-codes/send", { email: value });
+      setResendIn(RESEND_COOLDOWN);
+    } catch (err) {
+      // 429 限流：按 Retry-After 进入倒计时，按钮保持禁用
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) {
+        setResendIn(err.retryAfter);
+      }
+      setError(err instanceof Error ? err.message : t("networkError"));
+    } finally {
+      setSendCodeStatus("idle");
+    }
   };
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -133,20 +181,44 @@ export function AuthPanel() {
       setError(t("requiredUsername"));
       return;
     }
-    if (password.length < 6) {
-      setError(t("passwordMinLength"));
+    if (mode === "register" && /\s/.test(username)) {
+      setError(t("usernameNoSpaces"));
+      return;
+    }
+    // 注册密码长度以后端契约为准（8–256）；登录仅做基础预校验
+    const minPassword = mode === "register" ? 8 : 6;
+    if (password.length < minPassword) {
+      setError(t("passwordMinLength", { min: minPassword }));
       return;
     }
     if (mode === "register" && password !== confirm) {
       setError(t("passwordMismatch"));
       return;
     }
+    if (mode === "register" && emailVerificationEnabled) {
+      if (!EMAIL_RE.test(email.trim())) {
+        setError(t("invalidEmail"));
+        return;
+      }
+      // verification_code 固定 6 位数字，保留可能的前导零
+      if (!/^\d{6}$/.test(emailCode.trim())) {
+        setError(t("invalidEmailCode"));
+        return;
+      }
+    }
 
     setStatus("loading");
     try {
       if (mode === "register") {
         // 注册（username 重复时后端返回 409，错误信息直接展示）
-        await post("/auth/register", { username, password });
+        await post("/auth/register", {
+          username,
+          password,
+          // 开关开启时必填；关闭时不传（传了也会被后端忽略）
+          ...(emailVerificationEnabled
+            ? { email: email.trim(), verification_code: emailCode.trim() }
+            : {}),
+        });
       }
       // 登录（注册成功后自动登录），后端同时写入 HttpOnly 刷新 Cookie
       const data = await post<{ access_token: string }>("/auth/login", {
@@ -226,7 +298,19 @@ export function AuthPanel() {
                 type="text"
                 placeholder={t("username")}
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (mode === "register") {
+                    // 注册时用户名不允许包含空格：输入空格时提示并过滤
+                    if (/\s/.test(value)) {
+                      setError(t("usernameNoSpaces"));
+                      setUsername(value.replace(/\s/g, ""));
+                      return;
+                    }
+                    if (error === t("usernameNoSpaces")) setError("");
+                  }
+                  setUsername(value);
+                }}
                 className="h-11 pl-9"
                 autoComplete="username"
               />
@@ -262,6 +346,48 @@ export function AuthPanel() {
                   autoComplete="new-password"
                 />
               </div>
+            )}
+            {/* 注册邮箱验证：开关开启时邮箱与验证码必填 */}
+            {mode === "register" && emailVerificationEnabled && (
+              <>
+                <div className="animate-rise-in relative">
+                  <Mail className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="email"
+                    inputMode="email"
+                    placeholder={t("email")}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="h-11 pl-9"
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="animate-rise-in flex gap-2">
+                  <Input
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder={t("emailCodePlaceholder")}
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ""))}
+                    className="h-11 flex-1"
+                    autoComplete="one-time-code"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={onSendEmailCode}
+                    disabled={resendIn > 0 || sendCodeStatus === "sending"}
+                    className="h-11 shrink-0"
+                  >
+                    {sendCodeStatus === "sending" && (
+                      <Loader2 className="size-4 animate-spin" />
+                    )}
+                    {resendIn > 0
+                      ? t("resendAfter", { seconds: resendIn })
+                      : t("sendCode")}
+                  </Button>
+                </div>
+              </>
             )}
 
             {error && (

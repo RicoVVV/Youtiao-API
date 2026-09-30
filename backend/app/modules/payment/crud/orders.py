@@ -1,7 +1,9 @@
-"""支付订单数据访问层，集中处理订单保存、归属查询和支付回调行锁。"""
+"""支付订单数据访问层，集中处理订单保存、归属查询、管理端流水查询和支付回调行锁。"""
 
+from datetime import datetime
 from uuid import UUID
 
+from app.modules.user.model.user import User
 from app.modules.wallet.model import RechargeOrder, RechargeOrderStatus
 from sqlalchemy import func
 from sqlalchemy import select as sqlalchemy_select
@@ -71,6 +73,83 @@ class PaymentCrud:
         )
         return total, orders
 
+    def list_paid_orders_for_admin(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        username: str | None,
+        payment_channel: str | None,
+        order_no: str | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[int, list[tuple[RechargeOrder, str]]]:
+        """按管理端筛选条件分页查询已支付充值订单，并附带用户名。
+
+        作用：在数据访问层完成已支付状态、支付时间范围和可选维度过滤、总数统计与稳定排序。
+        使用位置：由 AdminPaymentOrderService 处理管理端支付流水列表请求时调用。
+        传入参数：start_at 与 end_at 为支付时间闭区间；username、payment_channel、order_no 为可选精确筛选；page 与 page_size 控制分页。
+        返回参数：返回筛选后订单总数和当前页（订单, 用户名）元组列表。
+        """
+
+        filters = _paid_order_filters(
+            start_at=start_at,
+            end_at=end_at,
+            username=username,
+            payment_channel=payment_channel,
+            order_no=order_no,
+        )
+        total = int(
+            self._session.scalar(
+                sqlalchemy_select(func.count())
+                .select_from(RechargeOrder)
+                .join(User, User.id == RechargeOrder.user_id)
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = self._session.execute(
+            sqlalchemy_select(RechargeOrder, User.username)
+            .join(User, User.id == RechargeOrder.user_id)
+            .where(*filters)
+            .order_by(RechargeOrder.paid_at.desc(), RechargeOrder.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        return total, [(order, username_value) for order, username_value in rows]
+
+    def list_paid_orders_for_export(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        username: str | None,
+        payment_channel: str | None,
+        order_no: str | None,
+    ) -> list[tuple[RechargeOrder, str]]:
+        """按管理端筛选条件查询全部已支付充值订单，供导出使用。
+
+        作用：与分页列表共用同一套筛选条件，但不分页，一次取回全部匹配记录。
+        使用位置：由 AdminPaymentOrderService 处理管理端支付流水导出请求时调用。
+        传入参数：start_at 与 end_at 为支付时间闭区间；username、payment_channel、order_no 为可选精确筛选。
+        返回参数：返回符合筛选条件的（订单, 用户名）元组列表，按支付时间和主键倒序排列。
+        """
+
+        filters = _paid_order_filters(
+            start_at=start_at,
+            end_at=end_at,
+            username=username,
+            payment_channel=payment_channel,
+            order_no=order_no,
+        )
+        rows = self._session.execute(
+            sqlalchemy_select(RechargeOrder, User.username)
+            .join(User, User.id == RechargeOrder.user_id)
+            .where(*filters)
+            .order_by(RechargeOrder.paid_at.desc(), RechargeOrder.id.desc())
+        ).all()
+        return [(order, username_value) for order, username_value in rows]
+
     def get_order_for_update(self, order_no: str) -> RechargeOrder | None:
         """按订单号锁定订单，串行化同一订单的并发支付回调。
 
@@ -107,3 +186,34 @@ class PaymentCrud:
         """
 
         self._session.flush()
+
+
+def _paid_order_filters(
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    username: str | None,
+    payment_channel: str | None,
+    order_no: str | None,
+) -> list:
+    """构造管理端列表与导出共用的已支付订单筛选条件。
+
+    作用：固定过滤 paid 状态并叠加支付时间闭区间，避免调用方遗漏状态约束。
+    使用位置：由 PaymentCrud 的管理端支付流水列表与导出查询调用。
+    传入参数：start_at 与 end_at 为支付时间闭区间；username、payment_channel、order_no 为可选精确筛选。
+    返回参数：可直接展开到 where 的筛选表达式列表。
+    """
+
+    filters = [
+        RechargeOrder.status == RechargeOrderStatus.paid,
+        RechargeOrder.paid_at.is_not(None),
+        RechargeOrder.paid_at >= start_at,
+        RechargeOrder.paid_at <= end_at,
+    ]
+    if username:
+        filters.append(User.username == username)
+    if payment_channel:
+        filters.append(RechargeOrder.payment_channel == payment_channel)
+    if order_no:
+        filters.append(RechargeOrder.order_no == order_no)
+    return filters

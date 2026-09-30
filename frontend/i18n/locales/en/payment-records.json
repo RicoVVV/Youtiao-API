@@ -1,0 +1,42 @@
+{
+  "title": "Payment Records",
+  "totalRecords": "{{total}} records in total",
+  "refresh": "Refresh",
+  "export": "Export CSV",
+  "exporting": "Exporting...",
+  "exportSuccess": "Export succeeded",
+  "exportFailed": "Export failed, please try again later",
+  "loadFailed": "Failed to load payment records",
+  "loadFailedWithReason": "Load failed: {{error}}",
+  "retry": "Retry",
+  "empty": "No payment records",
+  "startTime": "Start time",
+  "endTime": "End time",
+  "rangeTo": "to",
+  "rangeRequired": "Please select a complete time range",
+  "rangeInvalid": "Start time must not be later than end time",
+  "rangeTooLong": "The query time span cannot exceed 366 days",
+  "filterByUsername": "Filter by username",
+  "filterByChannel": "Filter by channel",
+  "filterByOrderNo": "Filter by order no.",
+  "search": "Search",
+  "channel": {
+    "all": "All channels",
+    "alipay_official": "Alipay Official",
+    "epay": "Epay",
+    "stripe": "Stripe"
+  },
+  "status": {
+    "paid": "Paid"
+  },
+  "colPaidAt": "Paid At",
+  "colOrderNo": "Order No.",
+  "colUsername": "Username",
+  "colTopupAmount": "Top-up Amount",
+  "colPayAmount": "Paid Amount",
+  "colChannel": "Channel",
+  "colMethod": "Method",
+  "colTransactionId": "Transaction ID",
+  "colStatus": "Status",
+  "colCreatedAt": "Created At"
+}

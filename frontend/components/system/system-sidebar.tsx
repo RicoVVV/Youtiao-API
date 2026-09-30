@@ -27,11 +27,18 @@ const MENU_ITEMS = [
     icon: Settings,
     children: [{ href: "/system/settings", labelKey: "settings" }],
   },
-  { key: "auth", icon: ShieldCheck, children: [] },
+  {
+    key: "auth",
+    icon: ShieldCheck,
+    children: [{ href: "/system/auth", labelKey: "emailVerification" }],
+  },
   {
     key: "billing",
     icon: CreditCard,
-    children: [{ href: "/system/payment-gateway", labelKey: "paymentGateway" }],
+    children: [
+      { href: "/system/payment-gateway", labelKey: "paymentGateway" },
+      { href: "/system/payment-records", labelKey: "paymentRecords" },
+    ],
   },
   { key: "models", icon: Route, children: [] },
   { key: "security", icon: Shield, children: [] },

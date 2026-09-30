@@ -59,10 +59,15 @@ class UserCrud:
 
         return self._session.scalar(select(User).where(User.username == username))
 
-    def create(self, *, username: str, password_hash: str, is_admin: bool = False) -> User:
+    def get_by_email(self, email: str) -> User | None:
+        """按邮箱（不区分大小写）查询未删除的用户。"""
+
+        return self._session.scalar(select(User).where(func.lower(User.email) == email.lower()).limit(1))
+
+    def create(self, *, username: str, password_hash: str, is_admin: bool = False, email: str | None = None) -> User:
         """创建用户并刷新主键，以支持同一事务创建关联记录。"""
 
-        user = User(username=username, password_hash=password_hash, is_admin=is_admin)
+        user = User(username=username, password_hash=password_hash, is_admin=is_admin, email=email)
         self._session.add(user)
         self._session.flush()
         return user

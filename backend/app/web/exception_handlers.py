@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.errors import (
     ApplicationError,
     AuthenticationError,
+    AuthenticationProviderUnavailableError,
     AuthenticationRateLimitUnavailableError,
     ConflictError,
     NotFoundError,
@@ -281,9 +282,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             headers=_response_headers(headers),
         )
 
+    @app.exception_handler(AuthenticationProviderUnavailableError)
     @app.exception_handler(AuthenticationRateLimitUnavailableError)
     async def handle_auth_rate_limit_unavailable(
-        request: Request, exc: AuthenticationRateLimitUnavailableError
+        request: Request, exc: AuthenticationRateLimitUnavailableError | AuthenticationProviderUnavailableError
     ) -> JSONResponse:
         if _is_public_protocol_request(request):
             return _protocol_error_response(

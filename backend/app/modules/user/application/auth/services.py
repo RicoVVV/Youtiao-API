@@ -8,8 +8,13 @@ from uuid import UUID
 from sqlmodel import Session
 
 from app.core.config import get_settings
-from app.core.errors import AuthenticationError, ConflictError, NotFoundError
+from app.core.errors import AuthenticationError, ConflictError, NotFoundError, ValidationError
+from app.modules.system_settings.application.services import SystemSettingsApplicationService
 from app.modules.user.application.auth.contracts import UserProfileData
+from app.modules.user.application.auth.email_verification import (
+    EmailAlreadyRegisteredError,
+    EmailVerificationService,
+)
 from app.modules.user.crud.auth_session_crud import AuthSessionCrud
 from app.modules.user.crud.refresh_token_crud import RefreshTokenCrud
 from app.modules.user.crud.user_crud import UserCrud
@@ -80,18 +85,42 @@ class AuthApplicationService:
         self._auth_sessions = AuthSessionCrud(session)
         self._refresh_tokens = RefreshTokenCrud(session)
 
-    def register_user(self, *, username: str, password: str) -> RegisteredUser:
+    def register_user(
+        self,
+        *,
+        username: str,
+        password: str,
+        email: str | None = None,
+        verification_code: str | None = None,
+        skip_email_verification: bool = False,
+    ) -> RegisteredUser:
         """注册用户并在同一事务创建钱包，不自动签发 API Key。
 
-        参数：username 为唯一用户名，password 为符合长度要求的登录密码。
+        参数：username 为唯一用户名，password 为符合长度要求的登录密码；
+        email 与 verification_code 在系统开启注册邮箱验证时必填；
+        skip_email_verification 仅供管理员代建账号跳过邮箱验证。
         返回值：创建后的用户。
-        异常：用户名重复时抛出 UsernameAlreadyExistsError；其他写入异常将回滚。
+        异常：用户名重复时抛出 UsernameAlreadyExistsError；邮箱已注册时抛出 EmailAlreadyRegisteredError；
+        邮箱或验证码缺失、错误时抛出 ValidationError；其他写入异常将回滚。
+        副作用：验证码在提交前被消费，事务失败时用户需重新获取验证码。
         """
 
+        verified_email: str | None = None
+        if not skip_email_verification:
+            settings = get_settings()
+            public_settings = SystemSettingsApplicationService(self._session, settings).get_public_settings()
+            if public_settings["email_verification_enabled"]:
+                if not email or not verification_code:
+                    raise ValidationError("已开启邮箱验证，注册时必须提供邮箱和验证码")
+                verified_email = EmailVerificationService.normalize_email(email)
         try:
+            if verified_email is not None and self._users.get_by_email(verified_email) is not None:
+                raise EmailAlreadyRegisteredError("该邮箱已被注册")
             if self._users.get_by_username(username) is not None:
                 raise UsernameAlreadyExistsError("用户名已存在")
-            user = self._users.create(username=username, password_hash=hash_password(password))
+            if verified_email is not None:
+                EmailVerificationService.consume_registration_code(email=verified_email, code=verification_code)
+            user = self._users.create(username=username, password_hash=hash_password(password), email=verified_email)
             # 用户主键已刷新，才能在同一事务内建立钱包归属关系。
             WalletCrud(self._session).create_wallet(user.id)
             self._session.commit()

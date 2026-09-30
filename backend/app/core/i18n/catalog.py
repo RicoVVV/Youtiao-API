@@ -17,6 +17,26 @@
 from __future__ import annotations
 
 MESSAGES_EN: dict[str, str] = {
+    "SMTP 加密方式必须是 none、starttls 或 ssl": "SMTP security must be none, starttls, or ssl",
+    "SMTP 密码密文无法解密": "The stored SMTP password cannot be decrypted",
+    "SMTP 端口必须在 1 到 65535 之间": "SMTP port must be between 1 and 65535",
+    "开启邮箱验证前必须配置 SMTP 服务器地址": "An SMTP host must be configured before enabling email verification",
+    "开启邮箱验证前必须配置 SMTP 用户名": ("An SMTP username must be configured before enabling email verification"),
+    "开启邮箱验证前必须配置 SMTP 密码": ("An SMTP password must be configured before enabling email verification"),
+    "开启邮箱验证前必须配置有效的发件人邮箱": (
+        "A valid sender email must be configured before enabling email verification"
+    ),
+    "邮件发送失败，请检查 SMTP 配置": "Failed to send email. Please check the SMTP configuration.",
+    "验证码服务暂不可用": "The verification code service is temporarily unavailable",
+    "验证码已过期或不存在，请重新获取": "The verification code has expired or does not exist. Please request a new one.",
+    "验证码错误次数过多，请重新获取": "Too many incorrect verification code attempts. Please request a new one.",
+    "验证码错误": "Incorrect verification code",
+    "邮箱验证功能未开启": "Email verification is not enabled",
+    "该邮箱已被注册": "This email is already registered",
+    "邮箱格式不合法": "Invalid email format",
+    "已开启邮箱验证，注册时必须提供邮箱和验证码": (
+        "Email verification is enabled; an email and verification code are required to register"
+    ),
     "Anthropic Messages Provider 不支持 OpenAI Responses API": "Anthropic Messages Provider does not support the OpenAI Responses API",
     "Anthropic Messages Provider 不支持图片生成": "Anthropic Messages Provider does not support image generation",
     "Anthropic Messages Provider 不支持图片编辑": "Anthropic Messages Provider does not support image editing",

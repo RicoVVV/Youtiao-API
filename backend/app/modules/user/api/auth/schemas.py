@@ -13,6 +13,21 @@ class UserRegistrationRequest(BaseModel):
     password: str = Field(min_length=8, max_length=256)
 
 
+class UserRegisterRequest(BaseModel):
+    """用户公开注册请求，邮箱和验证码在开启验证时必填（由应用服务校验）。"""
+
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=8, max_length=256)
+    email: str | None = Field(default=None, max_length=320)
+    verification_code: str | None = Field(default=None, min_length=6, max_length=6)
+
+
+class EmailVerificationCodeRequest(BaseModel):
+    """发送注册邮箱验证码请求。"""
+
+    email: str = Field(min_length=1, max_length=320)
+
+
 class Credentials(BaseModel):
     """统一登录请求，用户名对应用户 username。"""
 

@@ -9,7 +9,14 @@ from sqlmodel import Session
 from app.core.auth import enforce_login_rate_limit, enforce_refresh_rate_limit, get_user_id
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.modules.user.api.auth.schemas import Credentials, SetupStatusResponse, UserRegistrationRequest
+from app.modules.user.api.auth.schemas import (
+    Credentials,
+    EmailVerificationCodeRequest,
+    SetupStatusResponse,
+    UserRegisterRequest,
+    UserRegistrationRequest,
+)
+from app.modules.user.application.auth.email_verification import EmailVerificationService
 from app.modules.user.application.auth.services import AuthApplicationService
 
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -56,15 +63,30 @@ def setup_initial_admin(
 
 
 @router.post("/register", response_model=None, summary="注册用户")
-def register_user(payload: UserRegistrationRequest, session: Annotated[Session, Depends(get_db)]) -> None:
+def register_user(payload: UserRegisterRequest, session: Annotated[Session, Depends(get_db)]) -> None:
     """公开注册用户并创建初始钱包。
 
-    参数：payload 包含用户名和密码。
+    参数：payload 包含用户名、密码，以及开启邮箱验证时必填的邮箱和验证码。
     返回值：无；成功响应由统一响应信封表示。
-    异常：用户名重复时返回 409，事务由应用服务负责。
+    异常：用户名或邮箱重复时返回 409，验证码缺失或错误时返回 422，事务由应用服务负责。
     """
 
     AuthApplicationService(session).register_user(**payload.model_dump())
+    return None
+
+
+@router.post("/email-verification-codes/send", response_model=None, summary="发送注册邮箱验证码")
+def send_email_verification_code(
+    payload: EmailVerificationCodeRequest,
+    session: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> None:
+    """向待注册邮箱发送 6 位验证码；功能未开启返回 422，邮箱已注册返回 409，限流或冷却返回 429。"""
+
+    client_host = request.client.host if request.client else "unknown"
+    EmailVerificationService(session, get_settings()).send_registration_code(
+        **payload.model_dump(), client_host=client_host
+    )
     return None
 
 

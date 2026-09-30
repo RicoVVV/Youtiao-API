@@ -11,6 +11,7 @@ export const namespaces = [
   "models",
   "api-docs",
   "errors",
+  "payment-records",
 ] as const;
 export type Namespace = (typeof namespaces)[number];
 

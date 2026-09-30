@@ -30,6 +30,9 @@ class User(SQLModelBase, table=True):
     )
     username: str = Field(sa_column=Column(String(128), nullable=False, comment="用户用于登录的唯一用户名"))
     password_hash: str = Field(sa_column=Column(String(256), nullable=False, comment="Argon2 密码摘要，绝不保存明文"))
+    email: str | None = Field(
+        default=None, sa_column=Column(String(320), nullable=True, comment="注册验证通过后的邮箱")
+    )
     is_active: bool = Field(
         default=True, sa_column=Column(Boolean, nullable=False, default=True, comment="禁用后拒绝登录和会话访问")
     )
