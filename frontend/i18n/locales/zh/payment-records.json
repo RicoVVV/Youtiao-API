@@ -1,0 +1,42 @@
+{
+  "title": "支付流水",
+  "totalRecords": "共 {{total}} 条流水",
+  "refresh": "刷新",
+  "export": "导出 CSV",
+  "exporting": "导出中...",
+  "exportSuccess": "导出成功",
+  "exportFailed": "导出失败，请稍后重试",
+  "loadFailed": "加载支付流水失败",
+  "loadFailedWithReason": "加载失败：{{error}}",
+  "retry": "重试",
+  "empty": "暂无支付流水",
+  "startTime": "开始时间",
+  "endTime": "结束时间",
+  "rangeTo": "至",
+  "rangeRequired": "请选择完整的时间范围",
+  "rangeInvalid": "开始时间不能晚于结束时间",
+  "rangeTooLong": "查询时间跨度不能超过 366 天",
+  "filterByUsername": "按用户名筛选",
+  "filterByChannel": "按支付渠道筛选",
+  "filterByOrderNo": "按订单号筛选",
+  "search": "查询",
+  "channel": {
+    "all": "全部渠道",
+    "alipay_official": "支付宝官方",
+    "epay": "易支付",
+    "stripe": "Stripe"
+  },
+  "status": {
+    "paid": "已支付"
+  },
+  "colPaidAt": "支付时间",
+  "colOrderNo": "订单号",
+  "colUsername": "用户名",
+  "colTopupAmount": "充值金额",
+  "colPayAmount": "实付金额",
+  "colChannel": "支付渠道",
+  "colMethod": "支付方式",
+  "colTransactionId": "渠道交易号",
+  "colStatus": "状态",
+  "colCreatedAt": "创建时间"
+}

@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "title": "API Docs",
+    "description": "API documentation for all models on the platform: browse endpoints by capability, family and model, with methods, paths, parameters, request body contracts, responses and error codes."
+  },
+  "hero": {
+    "badge": "API Docs",
+    "title": "API Documentation",
+    "subtitle": "Browse every API contract by capability → family → model → endpoint, including parameters, request bodies, responses and error codes."
+  },
+  "sidebar": {
+    "title": "Endpoints",
+    "unknownFamily": "Ungrouped"
+  },
+  "loading": "Loading…",
+  "empty": {
+    "loadFailed": "Failed to load the documentation catalog. Please try again later.",
+    "detailFailed": "Failed to load the documentation detail. Please try again later.",
+    "noSelection": "Select an endpoint on the left"
+  },
+  "detail": {
+    "auth": "Authentication",
+    "pathParams": "Path Parameters",
+    "queryParams": "Query Parameters",
+    "requestBody": "Request Body",
+    "notes": "Notes",
+    "example": "Request Example",
+    "exampleModelHint": "The model value in the example is illustrative. See GET /v1/models for the actual usable model names.",
+    "taskStatus": "Task Status",
+    "statusName": "Status",
+    "statusDesc": "Description",
+    "paramName": "Name",
+    "paramDesc": "Description",
+    "copy": "Copy",
+    "copied": "Copied",
+    "material": "Material upload: {{categories}}{{multiple}}",
+    "materialMultiple": ", multiple",
+    "characters": "characters",
+    "minLength": "at least {{count}} characters",
+    "maxItems": "up to {{count}} items",
+    "optionalValues": "Allowed values",
+    "streamRequest": "Streaming (controlled by request stream field)",
+    "streamAlways": "Streaming response",
+    "unregistered": "This endpoint is not documented yet; only the path is shown."
+  }
+}

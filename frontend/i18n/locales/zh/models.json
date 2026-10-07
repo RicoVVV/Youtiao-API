@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "title": "模型广场",
+    "description": "Youtiao API 支持的全部 AI 模型：文本对话、图像生成、视频生成，价格透明，按量计费。"
+  },
+  "hero": {
+    "badge": "按量计费 · 价格透明 · 统一协议",
+    "titlePrefix": "模型",
+    "titleSuffix": "广场",
+    "subtitle": "顶级文本、图像、视频模型一站聚合，一个 Key 即可调用全部。",
+    "tag1": "文本 · 图像 · 视频全覆盖",
+    "tag2": "兼容 OpenAI 协议"
+  },
+  "category": {
+    "all": "全部",
+    "text": "文本对话",
+    "image": "图像生成",
+    "video": "视频生成"
+  },
+  "search": {
+    "placeholder": "搜索模型名称 / 简介"
+  },
+  "provider": {
+    "all": "全部"
+  },
+  "price": {
+    "usageBased": "按量计费",
+    "perMillionTokens": "/百万 tokens",
+    "perImage": "/张",
+    "perSecond": "/秒",
+    "perCall": "/次",
+    "per1MTokens": "/1M tokens",
+    "input": "输入",
+    "cached": "缓存",
+    "output": "输出",
+    "featured": "主推",
+    "coverAlt": "{{name}} 生成效果示意",
+    "zoomAlt": "放大查看"
+  },
+  "empty": {
+    "noModels": "暂无可用模型",
+    "noMatch": "没有找到匹配的模型，换个关键词试试。"
+  },
+  "detail": {
+    "copyName": "复制模型名",
+    "close": "关闭",
+    "pricing": "计费规则",
+    "example": "调用示例",
+    "parameters": "参数结构",
+    "copy": "复制",
+    "copied": "已复制",
+    "copyJson": "复制 JSON",
+    "fieldCount": "{{count}} 个字段",
+    "usageBased": "按实际用量",
+    "standard": "标准价",
+    "defaultTier": "默认价格等级",
+    "usageBasedDesc": "按实际用量计费",
+    "notConfigured": "暂未配置",
+    "perSec": "/ 秒",
+    "expand": "展开全部尺寸",
+    "collapse": "收起",
+    "perUsage": "按量",
+    "perMToken": " / 1M Token",
+    "freeQuota": "前 {{count}} 张免费",
+    "optionalValues": "可选值",
+    "characters": "字符",
+    "maxItems": "最多 {{count}} 项"
+  }
+}

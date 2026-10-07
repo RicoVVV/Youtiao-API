@@ -1,0 +1,50 @@
+.env
+.env.prod
+# 本地部署密钥：docker compose 在 docker/ 目录读取的 .env 不得提交
+docker/.env
+
+backend/.env
+.venv/
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/.pytest_cache/
+media/
+backend/media/
+celerybeat-schedule
+backend/celerybeat-schedule
+.superpowers/
+backend/.superpowers/
+*.egg-info/
+.coverage
+coverage.xml
+.ruff_cache/
+backend/.ruff_cache/
+.mypy_cache/
+tests/*
+.trae/*
+
+# frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.env*
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.vercel
+backend/.mypy_cache/
+backend/tests/*
+!backend/tests/test_fal_provider.py
+backend/data/*
+frontend/node_modules/
+frontend/dist/
+.trae/*
+docs/*
+new-api-main (1)/*
+frontend/.npm-cache/*
+
+# 内部资料：产品/设计文档与本地压测脚本，不随开源仓库发布
+local/

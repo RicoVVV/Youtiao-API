@@ -1,0 +1,75 @@
+{
+  "meta": {
+    "title": "Youtiao API · LLM API Gateway",
+    "description": "Youtiao API aggregates leading LLMs worldwide. One API Key to call them all, pay-as-you-go, stable and fast."
+  },
+  "action": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "copy": "Copy",
+    "copied": "Copied",
+    "submit": "Submit",
+    "back": "Back",
+    "close": "Close",
+    "refresh": "Refresh",
+    "export": "Export",
+    "import": "Import",
+    "enable": "Enable",
+    "disable": "Disable",
+    "viewDetail": "View details",
+    "loadMore": "Load more",
+    "retry": "Retry"
+  },
+  "status": {
+    "loading": "Loading…",
+    "empty": "No data",
+    "failed": "Failed to load",
+    "success": "Success",
+    "saving": "Saving…",
+    "deleting": "Deleting…",
+    "all": "All",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
+  },
+  "nav": {
+    "home": "Home",
+    "models": "Models",
+    "console": "Console",
+    "login": "Log in",
+    "logout": "Log out",
+    "docs": "Docs",
+    "pricing": "Pricing"
+  },
+  "language": {
+    "label": "Language",
+    "zh": "中文",
+    "en": "English"
+  },
+  "theme": {
+    "dark": "Switch to dark mode",
+    "light": "Switch to light mode"
+  },
+  "pagination": {
+    "total": "{{count}} records",
+    "prev": "Previous",
+    "next": "Next"
+  },
+  "confirm": {
+    "deleteTitle": "Confirm deletion",
+    "deleteDesc": "This cannot be undone. Continue?",
+    "unsaved": "You have unsaved changes. Leave anyway?"
+  },
+  "jsonEditor": {
+    "invalid": "Invalid JSON",
+    "copy": "Copy",
+    "copyAria": "Copy JSON",
+    "copyFailed": "Copy failed",
+    "format": "Format JSON",
+    "formatFailed": "Invalid JSON, cannot format"
+  }
+}
