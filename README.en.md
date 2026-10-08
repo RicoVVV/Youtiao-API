@@ -1,32 +1,83 @@
+<div align="center">
+
+![Youtiao API](frontend/public/youtiao.svg)
+
 # Youtiao API
 
-[简体中文](README.md) | **English**
+**An AI model aggregation gateway for applications and teams**
 
-Youtiao API is an open-source AI model aggregation gateway: use a single `sk-` key to access
-text, image, and video models, with multi-vendor protocol adapters, usage-based billing, wallet
-and payments, usage statistics, monitoring and alerting, and a full management console.
+<p align="center">
+  <a href="./README.md">简体中文</a> |
+  <strong>English</strong>
+</p>
 
-## Features
+<p align="center">
+  <a href="#project-description">Project Description</a> •
+  <a href="#capabilities">Capabilities</a> •
+  <a href="#protocols-and-endpoints">Protocols and endpoints</a> •
+  <a href="#quick-start">Quick start</a> •
+  <a href="#deployment">Deployment</a> •
+  <a href="#development">Development</a> •
+  <a href="#documentation">Documentation</a>
+</p>
 
-- **Unified gateway**: call every model with one API key. Change a single `baseURL` to integrate, and it works with the OpenAI SDK.
-- **Multi-vendor adapters**: built-in adapters for Anthropic (Claude), Google Gemini, OpenAI-compatible, Alibaba Cloud DashScope (Qwen), Volcengine Ark (Doubao Seed), FAL, MiniMax, and more.
-- **Multi-protocol compatibility**: exposes OpenAI (text / image / video / models / Responses), Anthropic Messages, Gemini, Volcengine Ark Responses, and DashScope text & multimodal protocol surfaces.
-- **Smart routing & concurrency control**: multi-channel routing, model mapping, per-group concurrency limits, and peak load distribution.
-- **Pricing & billing**: precise metering by tokens, image count, and video duration, with pricing rules, multipliers, and cache-billing items.
-- **Users & tokens**: registration and login, token groups, and per-key permission and quota management.
-- **Wallet & payments**: balance, top-up, and redemption codes, supporting Alipay (official), Epay, and Stripe.
-- **Usage statistics**: call records and daily aggregated statistics, queryable in real time.
-- **Monitoring & alerting**: group business metrics and server resource monitoring, with DingTalk webhook alerts.
-- **Console & i18n**: Next.js management console, model marketplace, and API docs, with built-in Chinese and English.
+</div>
 
-## Tech Stack
+---
 
-| Layer | Technology |
+## Project Description
+
+Youtiao API is a self-hosted AI model aggregation gateway: use a single `sk-` key to access
+text, image, and video models, expose a consistent compatible API to your clients, and manage
+routing, access, billing, and usage in one console.
+
+Use it to share authorized model access across a team, switch providers without reconfiguring every
+client, or operate a private multi-model service with a web console. Upstreams include Anthropic
+(Claude), Google Gemini, OpenAI-compatible services, Alibaba Cloud DashScope (Qwen), Volcengine
+Ark (Doubao Seed), FAL, MiniMax, and more.
+
+> [!IMPORTANT]
+> - This project is intended solely for lawful and authorized AI API gateway, organization-level authentication, multi-model management, usage analytics, and private deployment scenarios.
+> - Users must lawfully obtain upstream API keys, accounts, model services, and interface permissions, and must comply with upstream terms of service and applicable laws and regulations.
+> - When providing generative AI services to the public, users should complete all required filing, licensing, content safety, real-name verification, log retention, and tax obligations required by their jurisdiction.
+
+> [!WARNING]
+> Before operating this project as a public generative AI service or API resale service, complete all
+> required filing, licensing, content safety, real-name verification, log retention, tax, payment, and
+> upstream authorization obligations.
+
+---
+
+## Capabilities
+
+| Area | What you can do |
 | --- | --- |
-| Backend | Python ≥ 3.11, FastAPI, SQLAlchemy / SQLModel, Alembic, Pydantic v2 |
-| Database / Cache | PostgreSQL 16, Redis 7 |
-| Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Radix UI, i18next |
-| Deployment | Docker, Docker Compose, Nginx, Gunicorn + Uvicorn |
+| Unified gateway | Call every model with one API key. Change a single `baseURL` to integrate, and it works with the OpenAI SDK |
+| Multi-vendor adapters | Built-in adapters for Anthropic, Google Gemini, OpenAI-compatible, Alibaba Cloud DashScope (Qwen), Volcengine Ark (Doubao Seed), FAL, and MiniMax |
+| Multi-protocol compatibility | Exposes OpenAI (text / image / video / models / Responses), Anthropic Messages, Gemini, Volcengine Ark Responses, and DashScope text & multimodal protocol surfaces |
+| Smart routing & concurrency | Multi-channel routing, model name mapping, per-group concurrency limits, and peak load distribution |
+| Pricing & billing | Precise metering by tokens, image count, and video duration, with pricing rules, multipliers, and cache-billing items |
+| Users & tokens | Registration and login, token groups, and per-key permission and quota management |
+| Wallet & payments | Balance, top-up, and redemption codes, supporting Alipay (official), Epay, and Stripe |
+| Usage statistics | Call records and daily aggregated statistics, filterable by type, model, key, and status, queryable in real time |
+| Monitoring & alerting | Group / channel business metrics and server resource monitoring, with DingTalk webhook alerts |
+| Console & i18n | Next.js management console, model marketplace, API docs, and a chat canvas, with built-in Chinese and English |
+
+## Protocols and endpoints
+
+| Interface | Common endpoints |
+| --- | --- |
+| OpenAI Chat / Responses | `POST /v1/chat/completions`, `POST /v1/responses` |
+| OpenAI model list | `GET /v1/models` |
+| Anthropic Messages | `POST /v1/messages` |
+| Gemini | `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` |
+| OpenAI images | `POST /v1/images/generations`, `POST /v1/images/edits` |
+| OpenAI videos | `POST /v1/videos`, `GET /v1/videos/{video_id}`, `GET /v1/videos/{video_id}/content` |
+| Alibaba Cloud DashScope | `POST /api/v1/services/aigc/text-generation/generation`, `POST /api/v1/services/aigc/multimodal-generation/generation` |
+| Volcengine Ark Responses | `POST /api/v3/responses` |
+
+Public interfaces are mounted on `/v1/**`, `/v1beta/**`, and some `/api/**` paths; platform management
+APIs live under `/api/**`. Available features depend on the channel, upstream model, and protocol mapping.
 
 ## Architecture Overview
 
@@ -84,7 +135,7 @@ generation), `video` (async video tasks), `pricing` and `billing` (pricing and b
 
 ## Quick Start
 
-### Option 1: Docker Compose (recommended)
+### Use Docker Compose
 
 Requires Docker and Docker Compose.
 
@@ -101,10 +152,81 @@ docker compose up -d --build
 Once up, open `http://localhost:3000` (change the port via `FRONTEND_PORT`).
 The first visit guides you to create an admin account at `/setup`.
 
-### Option 2: Local development
+### Make your first request
 
-Backend (requires a local PostgreSQL; Redis is optional for session caching, and auth falls back
-to the database when it is unavailable):
+1. Create a channel in **Channels**, fill in the upstream base URL and API key, select the available models and token group, and run the test.
+2. Register the public model under **Models** and configure its pricing; make sure the user has balance or quota.
+3. Create a key under **API Keys**; its group and model scope must match the channel.
+4. Set your client `baseURL` to `http://localhost:3000/v1` and use the platform-issued `sk-` key.
+
+Export the key, then list the accessible models:
+
+```bash
+export YOUTIAO_API_KEY=sk-xxxxxxxx
+curl --fail-with-body http://localhost:3000/v1/models \
+  -H "Authorization: Bearer ${YOUTIAO_API_KEY}"
+```
+
+Then send a chat completion, replacing `your-enabled-model` with an enabled model name:
+
+```bash
+curl --fail-with-body http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer ${YOUTIAO_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"your-enabled-model","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+## Deployment
+
+### Docker Compose (recommended)
+
+The [Compose configuration](docker/docker-compose.yml) starts **Nginx + frontend + API + PostgreSQL + Redis**,
+with only Nginx exposing a port; the other services communicate on the internal network.
+
+```bash
+cd docker
+cp .env.example .env
+docker compose up -d --build
+docker compose logs -f api
+```
+
+### Storage and configuration
+
+| Component | Options |
+| --- | --- |
+| Main database | PostgreSQL 16 |
+| Cache | Redis 7 (JWT session-validation cache; auth falls back to the database when unavailable) |
+| Media storage | The `/app/media` volume inside the API container (video outputs and input materials) |
+| Container platforms | Linux amd64 / arm64 |
+
+| Variable | Purpose |
+| --- | --- |
+| `POSTGRES_PASSWORD` | Database password, **required**; Compose exits with an error when missing |
+| `JWT_SIGNING_KEY` | Access-token HS256 signing key, **required**; strength is enforced outside development |
+| `REFRESH_TOKEN_PEPPER` | Refresh-token digest pepper, **required**; strength is enforced outside development |
+| `DATABASE_URL` | Database connection string; Compose assembles it from `POSTGRES_*` automatically |
+| `AUTH_REDIS_URL` | Redis connection used only for session-validation caching |
+| `PAYMENT_CONFIG_ENCRYPTION_KEY` | Payment credential encryption key (Fernet); only needed when payments are enabled |
+| `PUBLIC_BASE_URL` | Public base URL used to generate absolute asset-download links |
+| `FRONTEND_PORT` | Nginx public port, default `3000` |
+| `APP_ENV` | Runtime environment; non-`development` enforces key strength |
+
+See [docker/.env.example](docker/.env.example), [backend/.env.example](backend/.env.example), and
+[backend/app/core/config.py](backend/app/core/config.py) for the full variable reference and defaults.
+
+### Security Notes
+
+- **Never commit `.env`**: `.gitignore` already ignores `.env`, `docker/.env`, and similar files.
+- **Secrets come from the environment**: the database password, JWT key, and payment encryption key are never hardcoded; supply them via environment variables.
+- **JWT_SIGNING_KEY / REFRESH_TOKEN_PEPPER** leakage allows tokens to be forged — use sufficiently long random values and keep them safe.
+- **PAYMENT_CONFIG_ENCRYPTION_KEY** encrypts payment credentials (Fernet); generate it with
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Changing it makes previously stored payment credentials undecryptable.
+
+## Development
+
+The backend uses Python ≥ 3.11 and FastAPI; the frontend uses Next.js (App Router) and React.
+
+### Backend (requires a local PostgreSQL; Redis optional)
 
 ```bash
 cd backend
@@ -116,7 +238,10 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
-Frontend:
+In development, the backend ships interactive docs at `http://localhost:8000/api/docs`
+(disabled in production by default).
+
+### Frontend
 
 ```bash
 cd frontend
@@ -128,34 +253,29 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Configuration
-
-| File | Purpose |
+| Location | Responsibility |
 | --- | --- |
-| [docker/.env.example](docker/.env.example) | Docker Compose deployment; copy to `docker/.env` |
-| [backend/.env.example](backend/.env.example) | Running the backend directly; copy to `backend/.env` |
+| [backend/app/bootstrap](backend/app/bootstrap) | App assembly: route registration, middleware, lifespan |
+| [backend/app/core](backend/app/core) | Config, auth, database, logging, errors, and the protocol registry |
+| [backend/app/modules](backend/app/modules) | Domain modules and upstream provider adapters |
+| [backend/app/web](backend/app/web) | Request context, unified responses, and streaming helpers |
+| [frontend/app](frontend/app) | Page routes (home, marketplace, docs, console, system settings) |
+| [frontend/components](frontend/components) | UI and business components |
+| [docker](docker) | Dockerfile, Compose, Nginx config and deployment env template |
 
-Only `DATABASE_URL` is required for the backend; every other variable has a code default (see
-[backend/app/core/config.py](backend/app/core/config.py)). Non-`development` environments enforce
-the strength of the JWT key and refresh token pepper.
+Backend tests and checks:
 
-## Security Notes
+```bash
+cd backend
+pytest
+ruff check .
+```
 
-- **Never commit `.env`**: `.gitignore` already ignores `.env`, `docker/.env`, and similar files.
-- **Secrets come from the environment**: the database password, JWT key, and payment encryption key are never hardcoded; supply them via environment variables.
-- **JWT_SIGNING_KEY / REFRESH_TOKEN_PEPPER** leakage allows tokens to be forged — use sufficiently long random values and keep them safe.
-- **PAYMENT_CONFIG_ENCRYPTION_KEY** encrypts payment credentials (Fernet); generate it with
-  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Changing it makes previously stored payment credentials undecryptable.
+## Documentation
 
-## API Surfaces
-
-APIs are exposed on the following paths (proxied directly to the backend by Nginx):
-
-- `/v1/**`, `/v1beta/**`: client-SDK compatible endpoints (OpenAI / Anthropic / Gemini / Volcengine Ark / DashScope protocols, etc.).
-- `/api/**`: platform management APIs, plus native vendor surfaces such as Qwen and Ark.
-
-In development, the backend ships interactive docs at `http://localhost:8000/api/docs`
-(disabled in production by default).
+| Resource | Link |
+| --- | --- |
+| Development API docs | `http://localhost:8000/api/docs` |
 
 ## License
 
