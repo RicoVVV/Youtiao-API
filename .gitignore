@@ -44,6 +44,7 @@ frontend/dist/
 .trae/*
 docs/*
 new-api-main (1)/*
+new-api-main (2)/*
 frontend/.npm-cache/*
 
 # 内部资料：产品/设计文档与本地压测脚本，不随开源仓库发布

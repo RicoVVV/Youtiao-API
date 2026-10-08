@@ -799,6 +799,8 @@
     "modelsLabel": "Models",
     "modelsPlaceholder": "Please select models",
     "modelsEmpty": "No models, please create on the \"Models\" page first",
+    "modelsSearchPlaceholder": "Search models",
+    "modelsSearchEmpty": "No matching models",
     "modelsHint": "After saving, this channel's service models, available groups and routing config will be updated",
     "groupsLabel": "Token Groups",
     "groupsPlaceholder": "Please select token groups",

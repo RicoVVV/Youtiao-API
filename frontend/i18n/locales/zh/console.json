@@ -799,6 +799,8 @@
     "modelsLabel": "模型",
     "modelsPlaceholder": "请选择模型",
     "modelsEmpty": "暂无模型，请先到「模型」页创建",
+    "modelsSearchPlaceholder": "搜索模型",
+    "modelsSearchEmpty": "未找到匹配的模型",
     "modelsHint": "保存后更新该渠道的服务模型、可用分组和选路配置",
     "groupsLabel": "令牌分组",
     "groupsPlaceholder": "请选择令牌分组",

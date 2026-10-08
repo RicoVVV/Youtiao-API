@@ -30,6 +30,13 @@ from app.modules.generation.application.services import (
     ModelCatalogApplicationService,
     TextGenerationApplicationService,
 )
+from app.modules.providers.anthropic.adapter import (
+    CHAT_COMPLETIONS_ENDPOINT,
+    MESSAGES_ENDPOINT,
+)
+from app.modules.providers.anthropic.adapter import (
+    ENDPOINT_FIELD as ANTHROPIC_ENDPOINT_FIELD,
+)
 from app.modules.providers.contracts import ProviderUpload
 from app.modules.providers.dashscope.adapter import (
     ENDPOINT_FIELD,
@@ -70,6 +77,8 @@ async def create_chat_completion(
     token_authorization: Annotated[TokenAuthorizationContext, Depends(require_token_group)],
 ) -> Response:
     payload = await _read_json_request(request)
+    # 公开路径决定调用形状：Anthropic 模型经该路径按 OpenAI Chat Completions 形状调用。
+    payload[ANTHROPIC_ENDPOINT_FIELD] = CHAT_COMPLETIONS_ENDPOINT
     service = TextGenerationApplicationService(get_async_session_factory())
     if payload.get("stream") is True:
         stream, content_type = await service.chat_stream(**_authorization_kwargs(token_authorization), payload=payload)
@@ -153,6 +162,8 @@ async def create_anthropic_message(
     token_authorization: Annotated[TokenAuthorizationContext, Depends(require_token_group)],
 ) -> Response:
     payload = await _read_json_request(request)
+    # 公开路径决定调用形状：Anthropic 原生 Messages 请求体原样转发。
+    payload[ANTHROPIC_ENDPOINT_FIELD] = MESSAGES_ENDPOINT
     service = TextGenerationApplicationService(get_async_session_factory())
     if payload.get("stream") is True:
         stream, content_type = await service.chat_stream_native(

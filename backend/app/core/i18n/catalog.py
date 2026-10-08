@@ -37,9 +37,10 @@ MESSAGES_EN: dict[str, str] = {
     "已开启邮箱验证，注册时必须提供邮箱和验证码": (
         "Email verification is enabled; an email and verification code are required to register"
     ),
-    "Anthropic Messages Provider 不支持 OpenAI Responses API": "Anthropic Messages Provider does not support the OpenAI Responses API",
     "Anthropic Messages Provider 不支持图片生成": "Anthropic Messages Provider does not support image generation",
     "Anthropic Messages Provider 不支持图片编辑": "Anthropic Messages Provider does not support image editing",
+    "Anthropic Responses 请求必须提供非空 input": ("Anthropic Responses requests must provide a non-empty input"),
+    "Anthropic 端点类型不合法": "Invalid Anthropic endpoint type",
     "Anthropic Messages 请求必须提供大于 0 的 max_tokens": (
         "Anthropic Messages requests must provide a max_tokens value greater than 0"
     ),
@@ -512,8 +513,9 @@ MESSAGES_EN: dict[str, str] = {
     "Gemini 原生图像生成与图像编辑，响应以 inlineData 返回图片。": (
         "Native Gemini image generation and editing, returning images as inlineData."
     ),
-    "Anthropic 原生 Messages 接口，支持同步与流式响应。": (
-        "Native Anthropic Messages API with synchronous and streaming responses."
+    "Anthropic Claude 文本生成，原生 Messages 与 OpenAI Chat / Responses 协议均可调用，支持同步与流式响应。": (
+        "Anthropic Claude text generation, callable via native Messages or the OpenAI Chat / Responses protocols, "
+        "with synchronous and streaming responses."
     ),
     "DashScope 原生 Generation 接口，支持纯文本与多模态输入及增量流式输出。": (
         "Native DashScope Generation API supporting text and multimodal input with incremental streaming output."

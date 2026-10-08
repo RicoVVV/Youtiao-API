@@ -46,6 +46,12 @@ from app.modules.pricing.application.engine import (
     select_pricing_plan,
 )
 from app.modules.pricing.model.pricing_item import PricingItemKind
+from app.modules.providers.anthropic import (
+    ENDPOINT_FIELD as ANTHROPIC_ENDPOINT_FIELD,
+)
+from app.modules.providers.anthropic import (
+    PROVIDER_NAME as ANTHROPIC_PROVIDER_NAME,
+)
 from app.modules.providers.contracts import (
     GenerationProvider,
     ProviderError,
@@ -239,6 +245,9 @@ class _GenerationServiceBase:
         provider_request = _provider_request(normalized, derived_pricing_fields)
         apply_upstream_model_name(provider_request, channel.model_mapping.get(model.name))
         provider_request.update(deepcopy(channel.param_override))
+        if template["provider_type"] != ANTHROPIC_PROVIDER_NAME:
+            # 端点标记仅供 anthropic 适配器选择调用形状，转发前从其它 Provider 的请求体剥离。
+            provider_request.pop(ANTHROPIC_ENDPOINT_FIELD, None)
         provider = get_channel_provider_factory().get_frozen_generation_provider(
             {
                 "route_id": str(route.binding.id),

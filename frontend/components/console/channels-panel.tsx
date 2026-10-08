@@ -631,6 +631,9 @@ function ChannelFormDialog({
                       }))}
                       placeholder={t("channels.modelsPlaceholder")}
                       emptyText={t("channels.modelsEmpty")}
+                      searchable
+                      searchPlaceholder={t("channels.modelsSearchPlaceholder")}
+                      noResultText={t("channels.modelsSearchEmpty")}
                     />
                     <p className="text-xs text-muted-foreground">
                       {t("channels.modelsHint")}

@@ -1,3 +1,14 @@
+"""Anthropic Messages 原生 Provider 适配器，并兼容 OpenAI Chat / Responses 协议面。
+
+``/v1/messages`` 保持 Anthropic 原生请求与响应；``/v1/chat/completions`` 与 ``/v1/responses`` 走
+OpenAI 协议形状。路由在请求体注入平台内部字段 ``ENDPOINT_FIELD`` 标识来源端点，适配器据此选择
+原生透传或调用 :mod:`app.modules.providers.anthropic.compat` 完成与 Messages 的互译，并在转发上游前
+剥离该字段，因此上游不会收到平台内部字段，客户端也无法通过请求体自行改变端点。
+
+Provider 仅在 ``/v1/messages`` 面上原样转发厂商请求；OpenAI 协议面的互译是本适配器承载的公开兼容
+能力，不改变上游 Messages 端点本身的请求编码、成功响应与流式事件。
+"""
+
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -10,15 +21,33 @@ from app.infrastructure.http.client import (
     WRITE_TIMEOUT_SECONDS,
     get_async_http_client,
 )
+from app.modules.providers.anthropic.compat import (
+    ChatStreamTranslator,
+    ResponsesStreamTranslator,
+    chat_request_to_messages,
+    messages_response_to_chat,
+    messages_response_to_responses,
+    responses_request_to_messages,
+)
 from app.modules.providers.contracts import ProviderError, ProviderProtocolOperation, ProviderUpload
 from app.modules.providers.http_support import provider_error_from_status, send_provider_request
+
+PROVIDER_NAME = "anthropic"
+
+ENDPOINT_FIELD = "_anthropic_endpoint"
+"""路由注入的平台内部端点字段，用于区分公开路径对应的调用形状。"""
+
+MESSAGES_ENDPOINT = "messages"
+CHAT_COMPLETIONS_ENDPOINT = "chat_completions"
+RESPONSES_ENDPOINT = "responses"
+_ENDPOINTS = frozenset({MESSAGES_ENDPOINT, CHAT_COMPLETIONS_ENDPOINT, RESPONSES_ENDPOINT})
 
 _MESSAGES_PATH = "/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 
 
 class AnthropicProvider:
-    name = "anthropic"
+    name = PROVIDER_NAME
 
     def __init__(
         self,
@@ -35,28 +64,30 @@ class AnthropicProvider:
         raise ValueError("Anthropic Messages Provider 不支持图片生成")
 
     def validate_chat_request(self, request_body: dict[str, Any]) -> None:
+        if _endpoint(request_body) == CHAT_COMPLETIONS_ENDPOINT:
+            _require_str_field(request_body, "model")
+            _require_messages(request_body)
+            return
         _require_str_field(request_body, "model")
-        messages = request_body.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("Anthropic Messages 请求必须提供非空 messages 列表")
+        _require_messages(request_body)
         max_tokens = request_body.get("max_tokens")
         if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0:
             raise ValueError("Anthropic Messages 请求必须提供大于 0 的 max_tokens")
 
+    def validate_response_request(self, request_body: dict[str, Any]) -> None:
+        _require_str_field(request_body, "model")
+        if request_body.get("input") in (None, "", [], {}):
+            raise ValueError("Anthropic Responses 请求必须提供非空 input")
+
     def protocol_operations(self) -> set[ProviderProtocolOperation]:
-        return {ProviderProtocolOperation("anthropic_messages", "create")}
+        return {
+            ProviderProtocolOperation("anthropic_messages", "create"),
+            ProviderProtocolOperation("openai_text", "create"),
+            ProviderProtocolOperation("openai_response", "create"),
+        }
 
     def capabilities(self) -> set[str]:
-        return {"chat_completion", "chat_stream"}
-
-    def validate_response_request(self, request_body: dict[str, Any]) -> None:
-        raise ValueError("Anthropic Messages Provider 不支持 OpenAI Responses API")
-
-    async def create_response(self, request_body: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
-        raise ValueError("Anthropic Messages Provider 不支持 OpenAI Responses API")
-
-    async def open_response_stream(self, request_body: dict[str, Any]) -> tuple[AsyncIterator[bytes], str]:
-        raise ValueError("Anthropic Messages Provider 不支持 OpenAI Responses API")
+        return {"chat_completion", "chat_stream", "response_creation", "response_stream"}
 
     async def generate_image(self, request_body: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
         raise ValueError("Anthropic Messages Provider 不支持图片生成")
@@ -68,14 +99,25 @@ class AnthropicProvider:
 
     async def chat(self, request_body: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
         self.validate_chat_request(request_body)
+        if _endpoint(request_body) == CHAT_COMPLETIONS_ENDPOINT:
+            upstream_body = chat_request_to_messages(_strip_endpoint(request_body))
+            try:
+                payload = await self._request_json(_MESSAGES_PATH, upstream_body, timeout=timeout)
+            finally:
+                await self._close_if_owned()
+            return messages_response_to_chat(payload)
         try:
-            return await self._request_json(_MESSAGES_PATH, request_body, timeout=timeout)
+            return await self._request_json(_MESSAGES_PATH, _strip_endpoint(request_body), timeout=timeout)
         finally:
             await self._close_if_owned()
 
     async def open_chat_stream(self, request_body: dict[str, Any]) -> tuple[AsyncIterator[bytes], str]:
         self.validate_chat_request(request_body)
-        response = await self._send_stream(request_body)
+        if _endpoint(request_body) == CHAT_COMPLETIONS_ENDPOINT:
+            response = await self._send_stream(chat_request_to_messages(_strip_endpoint(request_body)))
+            content_type = response.headers.get("content-type", "text/event-stream")
+            return self._translated_stream(response, ChatStreamTranslator()), content_type
+        response = await self._send_stream(_strip_endpoint(request_body))
         content_type = response.headers.get("content-type", "text/event-stream")
 
         async def chunks() -> AsyncIterator[bytes]:
@@ -87,6 +129,40 @@ class AnthropicProvider:
                 await self._close_if_owned()
 
         return chunks(), content_type
+
+    async def create_response(self, request_body: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+        self.validate_response_request(request_body)
+        upstream_body = responses_request_to_messages(_strip_endpoint(request_body))
+        try:
+            payload = await self._request_json(_MESSAGES_PATH, upstream_body, timeout=timeout)
+        finally:
+            await self._close_if_owned()
+        return messages_response_to_responses(payload)
+
+    async def open_response_stream(self, request_body: dict[str, Any]) -> tuple[AsyncIterator[bytes], str]:
+        self.validate_response_request(request_body)
+        upstream_body = responses_request_to_messages(_strip_endpoint(request_body))
+        response = await self._send_stream(upstream_body)
+        content_type = response.headers.get("content-type", "text/event-stream")
+        return self._translated_stream(response, ResponsesStreamTranslator()), content_type
+
+    def _translated_stream(
+        self, response: httpx.Response, translator: ChatStreamTranslator | ResponsesStreamTranslator
+    ) -> AsyncIterator[bytes]:
+        """按行解析上游 SSE，逐事件翻译为 OpenAI 形状后转发。"""
+
+        async def chunks() -> AsyncIterator[bytes]:
+            try:
+                async for line in response.aiter_lines():
+                    for chunk in translator.feed_line(line):
+                        yield chunk
+                for chunk in translator.finish():
+                    yield chunk
+            finally:
+                await response.aclose()
+                await self._close_if_owned()
+
+        return chunks()
 
     async def _request_json(
         self, path: str, request_body: dict[str, Any], *, timeout: float | None = None
@@ -165,6 +241,29 @@ class AnthropicProvider:
     async def _close_if_owned(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+
+def _endpoint(request_body: dict[str, Any]) -> str:
+    """按路由注入的平台内部字段返回端点形状，缺失时按原生 Messages 处理。"""
+
+    value = request_body.get(ENDPOINT_FIELD)
+    if value is None:
+        return MESSAGES_ENDPOINT
+    if not isinstance(value, str) or value not in _ENDPOINTS:
+        raise ValueError("Anthropic 端点类型不合法")
+    return value
+
+
+def _strip_endpoint(request_body: dict[str, Any]) -> dict[str, Any]:
+    """剥离平台内部字段，保证上游只收到 Anthropic Messages 原生请求体。"""
+
+    return {key: value for key, value in request_body.items() if key != ENDPOINT_FIELD}
+
+
+def _require_messages(request_body: dict[str, Any]) -> None:
+    messages = request_body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Anthropic Messages 请求必须提供非空 messages 列表")
 
 
 def _require_str_field(request_body: dict[str, Any], field: str) -> str:

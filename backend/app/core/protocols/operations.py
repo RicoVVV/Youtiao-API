@@ -68,7 +68,11 @@ def _operation_specs(*, template_id: str | None, model_type: str) -> list[tuple[
             ("gemini_text", "POST", "/v1beta/models/{model}:streamGenerateContent", "text/event-stream", "always"),
         ]
     if template_id == "anthropic_messages_default" and model_type == "text":
-        return [("anthropic_messages", "POST", "/v1/messages", "application/json", "request")]
+        return [
+            ("anthropic_messages", "POST", "/v1/messages", "application/json", "request"),
+            ("openai_text", "POST", "/v1/chat/completions", "application/json", "request"),
+            ("openai_response", "POST", "/v1/responses", "application/json", "request"),
+        ]
     if template_id == "dashscope_default" and model_type == "text":
         return [
             (
