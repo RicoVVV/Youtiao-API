@@ -31,4 +31,5 @@ def get_user_info(user_id: Annotated[UUID, Depends(get_user_id)], session: Annot
         "balance": profile.balance,
         "usage": profile.usage,
         "created_at": profile.created_at,
+        "membership": profile.membership,
     }

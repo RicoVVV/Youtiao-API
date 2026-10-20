@@ -3,9 +3,10 @@
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ValidationError
+from app.modules.membership.application.services import MembershipQueryService
 from app.modules.payment.application.pricing import money_text
 from app.modules.payment.crud.orders import PaymentCrud
-from app.modules.wallet.model import RechargeOrder
+from app.modules.wallet.model import RechargeOrder, RechargeOrderType
 from sqlmodel import Session
 
 # 管理端支付流水查询的最大时间跨度，避免一次拉取过量流水。
@@ -25,6 +26,7 @@ class AdminPaymentOrderService:
         """
 
         self._crud = PaymentCrud(session)
+        self._memberships = MembershipQueryService(session)
 
     def list_orders(
         self,
@@ -56,7 +58,7 @@ class AdminPaymentOrderService:
             page_size=page_size,
         )
         return {
-            "items": [self._item_view(order, name) for order, name in rows],
+            "items": self._item_views(rows),
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -87,7 +89,28 @@ class AdminPaymentOrderService:
             payment_channel=payment_channel,
             order_no=order_no,
         )
-        return [self._item_view(order, name) for order, name in rows]
+        return [self._flatten_membership(item) for item in self._item_views(rows)]
+
+    def _item_views(self, rows: list[tuple[RechargeOrder, str]]) -> list[dict[str, object]]:
+        """批量组装流水视图，并为会员订单附带会员购买结果。"""
+
+        results = self._memberships.get_order_results(
+            {order.id for order, _ in rows if order.order_type == RechargeOrderType.membership}
+        )
+        return [{**self._item_view(order, name), "membership": results.get(order.id)} for order, name in rows]
+
+    @staticmethod
+    def _flatten_membership(item: dict[str, object]) -> dict[str, object]:
+        """将会员购买结果展开为导出文件可用的平铺字段。"""
+
+        membership = item["membership"] or {}
+        return {
+            **item,
+            "membership_source": membership.get("source"),
+            "membership_level_name": membership.get("level_name"),
+            "membership_expires_after": membership.get("expires_after"),
+            "membership_bonus_amount": membership.get("bonus_amount"),
+        }
 
     @staticmethod
     def _normalize_range(start_at: datetime, end_at: datetime) -> tuple[datetime, datetime]:
@@ -127,6 +150,7 @@ class AdminPaymentOrderService:
             "order_no": order.order_no,
             "user_id": str(order.user_id),
             "username": username,
+            "order_type": RechargeOrderType(order.order_type).value,
             "topup_amount": money_text(order.amount),
             "pay_amount": money_text(order.expected_pay_amount or order.amount),
             "payment_channel": order.payment_channel,

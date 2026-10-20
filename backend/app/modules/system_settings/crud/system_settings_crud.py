@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlmodel import Session
 
 from app.modules.system_settings.model import SystemSetting
@@ -11,12 +13,12 @@ class SystemSettingsCrud:
     def get(self) -> SystemSetting | None:
         return self._session.get(SystemSetting, SYSTEM_SETTINGS_ID)
 
-    def create(self, values: dict[str, str]) -> SystemSetting:
+    def create(self, values: dict[str, Any]) -> SystemSetting:
         setting = SystemSetting(id=SYSTEM_SETTINGS_ID, **values)
         self._session.add(setting)
         return setting
 
-    def update(self, setting: SystemSetting, values: dict[str, str]) -> SystemSetting:
+    def update(self, setting: SystemSetting, values: dict[str, Any]) -> SystemSetting:
         for key, value in values.items():
             setattr(setting, key, value)
         self._session.add(setting)

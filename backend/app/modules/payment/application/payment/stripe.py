@@ -19,6 +19,7 @@ from app.modules.payment.application.errors import (
     PaymentProviderUnavailableError,
 )
 from app.modules.payment.application.exchange_rate import ExchangeRateService, UsdChargeQuote
+from app.modules.payment.application.order_quote import OrderQuoteResolver
 from app.modules.payment.application.pricing import PaymentPricingService, money_text
 from app.modules.payment.application.return_url import append_order_no
 from app.modules.payment.application.settlement import PaymentSettlementService
@@ -72,13 +73,16 @@ class StripePaymentApplicationService:
             raise PaymentDisabledError("支付方式未配置")
         if payload["payment_method"] != "card":
             raise PaymentBusinessError("Stripe 首版仅支持 card 支付方式")
-        quote = self._pricing.quote(payload["amount"], payment=payment)
+        quote_result = OrderQuoteResolver(self._session, self._pricing).resolve(user_id, payload, payment)
+        quote = quote_result.quote
         # 创建订单时必须重新获取汇率，不能信任前端曾展示的报价。
         usd_charge = self._exchange_rates.quote_usd_charge(quote.pay_amount)
         # 每次创建请求都生成独立本地订单；Stripe 的远端请求仍使用订单 id 作为稳定幂等键。
         order = RechargeOrder(
             user_id=user_id,
             order_no=_new_order_no(user_id),
+            order_type=quote_result.order_type,
+            membership_plan_id=quote_result.membership_plan_id,
             amount=quote.topup_amount,
             payment_channel=STRIPE,
             payment_method="card",

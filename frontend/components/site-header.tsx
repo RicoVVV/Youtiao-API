@@ -3,6 +3,7 @@ import { HeaderAuth } from "./header-auth";
 import { MainNav } from "./main-nav";
 import { LocaleSwitcher } from "./locale-switcher";
 import { ThemeSwitcher } from "./theme-switcher";
+import { MessageBell } from "./message-bell";
 import { SiteLogo } from "./site-logo";
 import { SiteName } from "./site-name";
 
@@ -23,6 +24,7 @@ export function SiteHeader() {
 
       {/* 固定在视口右上角：主题切换 + 语言切换 + 账户头像，垂直与 h-14 头部对齐 */}
       <div className="fixed right-4 top-0 z-[60] flex h-14 items-center gap-3">
+        <MessageBell />
         <ThemeSwitcher />
         <LocaleSwitcher />
         <HeaderAuth />

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SetupGuard } from "@/components/setup-guard";
+import { NotificationPopup } from "@/components/notification-popup";
 import { Toaster } from "@/components/ui/toaster";
 import { I18nProvider } from "@/i18n/client";
 import { locales, isLocale, namespaces, type Locale } from "@/i18n/config";
@@ -79,6 +80,7 @@ export default async function LocaleLayout({
         <I18nProvider locale={locale as Locale} resources={resources}>
           <SetupGuard />
           {children}
+          <NotificationPopup />
           <Toaster />
         </I18nProvider>
       </body>

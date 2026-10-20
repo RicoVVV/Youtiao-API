@@ -2,14 +2,33 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, exists, func, select, update
 from sqlmodel import Session
 
+from app.modules.membership.model import MembershipLevel, MembershipLevelGroup, UserMembership
 from app.modules.user.model.token_group import TokenGroup, TokenGroupBinding, TokenGroupUser
 
 
 class TokenGroupCrud:
     """封装 Token 分组授权和绑定的持久化读写。"""
+
+    @staticmethod
+    def _available_condition(user_id: UUID) -> ColumnElement[bool]:
+        """分组对用户可用：公开、显式授权，或当前有效会员等级关联的专享分组。"""
+
+        membership_group = exists(
+            select(MembershipLevelGroup.id)
+            .join(UserMembership, UserMembership.level_id == MembershipLevelGroup.level_id)
+            .join(MembershipLevel, MembershipLevel.id == MembershipLevelGroup.level_id)
+            .where(
+                MembershipLevelGroup.group_id == TokenGroup.id,
+                MembershipLevelGroup.is_del.is_(False),
+                MembershipLevel.is_del.is_(False),
+                UserMembership.user_id == user_id,
+                UserMembership.expires_at > func.now(),
+            )
+        )
+        return (TokenGroup.visibility == "public") | (TokenGroupUser.user_id == user_id) | membership_group
 
     def __init__(self, session: Session) -> None:
         """绑定调用方提供的事务会话。"""
@@ -75,7 +94,7 @@ class TokenGroupCrud:
                 .outerjoin(TokenGroupUser, TokenGroupUser.group_id == TokenGroup.id)
                 .where(
                     TokenGroup.is_active.is_(True),
-                    (TokenGroup.visibility == "public") | (TokenGroupUser.user_id == user_id),
+                    self._available_condition(user_id),
                 )
                 .distinct()
                 .order_by(TokenGroup.id)
@@ -127,7 +146,7 @@ class TokenGroupCrud:
                 .where(
                     TokenGroup.id == group_id,
                     TokenGroup.is_active.is_(True),
-                    (TokenGroup.visibility == "public") | (TokenGroupUser.user_id == user_id),
+                    self._available_condition(user_id),
                 )
             )
             is not None
@@ -161,7 +180,7 @@ class TokenGroupCrud:
                 .where(
                     TokenGroupBinding.token_id == token_id,
                     TokenGroup.is_active.is_(True),
-                    (TokenGroup.visibility == "public") | (TokenGroupUser.user_id == user_id),
+                    self._available_condition(user_id),
                 )
                 .order_by(TokenGroupBinding.priority, TokenGroupBinding.id)
             ).all()

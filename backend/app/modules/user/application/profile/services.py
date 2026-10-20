@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlmodel import Session
 
 from app.core.errors import NotFoundError
+from app.modules.membership.application.services import MembershipQueryService
 from app.modules.user.application.auth.contracts import UserProfileData
 from app.modules.user.crud.user_crud import UserCrud
 
@@ -22,9 +23,10 @@ class UserProfileApplicationService:
         """
 
         self._users = UserCrud(session)
+        self._memberships = MembershipQueryService(session)
 
     def get_profile(self, user_id: UUID) -> UserProfileData:
-        """查询用户资料并转换为不含密码与认证状态的安全投影。
+        """查询用户资料并转换为不含密码与认证状态的安全投影，含当前会员状态。
 
         参数：user_id 为已通过鉴权的用户标识。
         返回值：用户不存在时返回 None，否则返回资料数据。
@@ -43,6 +45,7 @@ class UserProfileApplicationService:
             created_at=user.created_at,
             balance=_format_amount(balance),
             usage=_format_amount(usage),
+            membership=self._memberships.get_active_membership(user_id),
         )
 
 

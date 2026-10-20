@@ -3,10 +3,11 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.modules.membership.application.services import MembershipApplicationService
 from app.modules.payment.application.errors import PaymentBusinessError
 from app.modules.payment.crud.orders import PaymentCrud
 from app.modules.wallet.application.services import WalletApplicationService
-from app.modules.wallet.model import BalanceRecordType, RechargeOrderStatus
+from app.modules.wallet.model import BalanceRecordType, RechargeOrderStatus, RechargeOrderType
 from sqlmodel import Session
 
 
@@ -45,6 +46,9 @@ class PaymentSettlementService:
         order.status = RechargeOrderStatus.paid
         order.channel_transaction_id = callback["trade_no"]
         order.paid_at = datetime.now(UTC)
+        if order.order_type == RechargeOrderType.membership:
+            MembershipApplicationService(self._session).apply_purchase(order)
+            return True
         WalletApplicationService(self._session).grant(
             user_id=order.user_id,
             amount=order.amount,

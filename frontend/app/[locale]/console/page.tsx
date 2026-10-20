@@ -6,5 +6,5 @@ export default async function ConsolePage({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
-  redirect(`/${locale}/console/usage`);
+  redirect(`/${locale}/console/overview`);
 }

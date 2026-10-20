@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.usage.api.schemas import (
     UsageRecordDetailQuery,
@@ -20,22 +20,33 @@ from sqlmodel import Session
 router = APIRouter(prefix="/usage", tags=["使用记录"])
 
 
-@router.get("/records/list", summary="查询我的使用记录")
+@router.get(
+    "/records/list",
+    dependencies=[Depends(require_sidebar_module("usage-records"))],
+    summary="查询我的使用记录",
+)
 def list_usage_records(
     payload: Annotated[UsageRecordListQuery, Depends()],
     user_id: Annotated[UUID, Depends(get_user_id)],
     session: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    total, items = UsageApplicationService(session).list_owned(user_id=user_id, **payload.model_dump())
+    total, items, summary = UsageApplicationService(session).list_owned(
+        user_id=user_id, range_name=payload.range, **payload.model_dump(exclude={"range"})
+    )
     return {
         "items": [usage_record_response(item, detail=False, include_admin_fields=False) for item in items],
         "total": total,
         "page": payload.page,
         "page_size": payload.page_size,
+        "summary": summary,
     }
 
 
-@router.get("/records/detail", summary="查询我的使用记录详情")
+@router.get(
+    "/records/detail",
+    dependencies=[Depends(require_sidebar_module("usage-records"))],
+    summary="查询我的使用记录详情",
+)
 def usage_record_detail(
     payload: Annotated[UsageRecordDetailQuery, Depends()],
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -45,7 +56,11 @@ def usage_record_detail(
     return usage_record_response(record, detail=True, include_admin_fields=False)
 
 
-@router.get("/statistics/overview", summary="查询我的用量概览")
+@router.get(
+    "/statistics/overview",
+    dependencies=[Depends(require_sidebar_module("usage"))],
+    summary="查询我的用量概览",
+)
 def usage_statistics_overview(
     payload: Annotated[UsageStatisticsQuery, Depends()],
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -59,7 +74,11 @@ def usage_statistics_overview(
     )
 
 
-@router.get("/statistics/trend", summary="查询我的用量趋势")
+@router.get(
+    "/statistics/trend",
+    dependencies=[Depends(require_sidebar_module("usage"))],
+    summary="查询我的用量趋势",
+)
 def usage_statistics_trend(
     payload: Annotated[UsageStatisticsQuery, Depends()],
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -75,7 +94,11 @@ def usage_statistics_trend(
     }
 
 
-@router.get("/statistics/models/list", summary="查询我的模型用量分布")
+@router.get(
+    "/statistics/models/list",
+    dependencies=[Depends(require_sidebar_module("usage"))],
+    summary="查询我的模型用量分布",
+)
 def usage_statistics_models(
     payload: Annotated[UsageStatisticsModelsQuery, Depends()],
     user_id: Annotated[UUID, Depends(get_user_id)],

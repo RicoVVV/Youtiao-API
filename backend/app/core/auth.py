@@ -1,6 +1,7 @@
 """统一暴露网页端 JWT 与对外长期 Token 的路由鉴权依赖。"""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
@@ -13,6 +14,7 @@ from sqlmodel import Session
 from app.core.config import get_settings
 from app.core.database import get_db, get_session_factory
 from app.infrastructure.redis.rate_limiter import enforce_auth_rate_limit
+from app.modules.system_settings.application.services import SystemSettingsApplicationService
 from app.modules.user.application.auth.contracts import AuthenticatedUser
 from app.modules.user.application.token.contracts import RuntimeTokenGroups
 from app.modules.user.application.token.services import TokenApplicationService
@@ -76,6 +78,27 @@ def get_admin_user_id(
     if user is None or not user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="管理员权限不足")
     return user_id
+
+
+def require_sidebar_module(module_key: str) -> Callable[..., None]:
+    """构造侧边栏模块可见性校验依赖。
+
+    参数：module_key 为侧边栏目录内的模块 key。
+    返回值：可直接用于 ``Depends`` 的依赖函数；模块被管理员关闭时对非管理员返回 403。
+    说明：管理员豁免该限制，避免隐藏模块后管理员无法访问对应接口；未登录仍由 ``get_user_id`` 返回 401。
+    """
+
+    def dependency(
+        user_id: Annotated[UUID, Depends(get_user_id)],
+        session: Annotated[Session, Depends(get_db)],
+    ) -> None:
+        user = UserCrud(session).get_by_id(user_id)
+        if user is not None and user.is_admin:
+            return
+        if not SystemSettingsApplicationService(session, get_settings()).is_sidebar_module_visible(module_key):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="该功能模块已被管理员关闭")
+
+    return dependency
 
 
 def require_token(

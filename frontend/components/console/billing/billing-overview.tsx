@@ -72,7 +72,7 @@ export function BillingOverview() {
     {
       icon: Wallet,
       label: t("billing.balance"),
-      value: account ? `$ ${fmt(account.balance)}` : "—",
+      value: account ? `¥ ${fmt(account.balance)}` : "—",
       hint: t("billing.balanceHint"),
       iconClass: "from-[#4c6fff] to-[#7c9aff]",
       cardClass: "from-[#4c6fff]/10",
@@ -81,7 +81,7 @@ export function BillingOverview() {
     {
       icon: Gauge,
       label: t("billing.totalUsage"),
-      value: account ? `$ ${fmt(account.usage)}` : "—",
+      value: account ? `¥ ${fmt(account.usage)}` : "—",
       hint: t("billing.totalUsageHint"),
       iconClass: "from-[#129dc2] to-[#5cc8e0]",
       cardClass: "from-[#129dc2]/10",

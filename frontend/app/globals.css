@@ -181,6 +181,12 @@
   .no-page-scrollbar body::-webkit-scrollbar {
     display: none;
   }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
   /* 隐藏浏览器（Edge）原生密码明文/清除按钮，避免与自定义小眼睛重复 */
   input::-ms-reveal,
   input::-ms-clear {
@@ -188,7 +194,25 @@
   }
 }
 
+/* 弹窗通知：卡片弹入与辉光呼吸 */
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+}
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+/* 弹窗通知：喇叭声波弧线依次向外扩散 */
+@keyframes sound-wave {
+  0% { opacity: 0; transform: translateX(-4px); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateX(8px); }
+}
+
 @layer utilities {
+  .animate-pop-in { animation: pop-in 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) backwards; }
+  .animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+  .animate-sound-wave { animation: sound-wave 1.8s ease-out infinite; }
   /* 品牌渐变标题：品牌蓝 → 紫 → 青，缓慢流动 */
   .text-gradient {
     @apply bg-gradient-to-r from-[#4c6fff] via-[#7c5cff] to-[#129dc2] bg-clip-text text-transparent;

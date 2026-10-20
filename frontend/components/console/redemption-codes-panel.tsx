@@ -76,7 +76,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 金额展示：纯字符串截取两位小数（"0.500000" → "¥0.50"），不做数值运算 */
 const formatYuan = (amount: string | number) => {
   const [intPart = "0", fracPart = ""] = String(amount).trim().split(".");
-  return `$${intPart}.${`${fracPart}00`.slice(0, 2)}`;
+  return `¥${intPart}.${`${fracPart}00`.slice(0, 2)}`;
 };
 
 /**

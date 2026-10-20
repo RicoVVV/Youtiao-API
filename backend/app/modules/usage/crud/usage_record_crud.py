@@ -129,9 +129,21 @@ class UsageRecordCrud:
         model_name: str | None,
         token_display_name: str | None,
         status: str | None,
-    ) -> tuple[int, list[UsageRecord]]:
-        statement = select(UsageRecord).where(UsageRecord.user_id == user_id)
-        return self._list(statement, page, page_size, request_type, model_name, token_display_name, status, None)
+        start_at: datetime | None,
+        end_at: datetime | None,
+    ) -> tuple[int, list[UsageRecord], tuple[int, int, Decimal, int]]:
+        statement = self._filter(
+            select(UsageRecord).where(UsageRecord.user_id == user_id),
+            request_type=request_type,
+            model_name=model_name,
+            token_display_name=token_display_name,
+            status=status,
+            channel_id=None,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        total, items = self._list(statement, page, page_size)
+        return total, items, self._summarize(statement)
 
     def list_admin(
         self,
@@ -146,8 +158,10 @@ class UsageRecordCrud:
         channel_id: UUID | None,
         provider_name: str | None,
         username: str | None,
-    ) -> tuple[int, list[UsageRecord]]:
-        statement = select(UsageRecord).options(selectinload(UsageRecord.user))
+        start_at: datetime | None,
+        end_at: datetime | None,
+    ) -> tuple[int, list[UsageRecord], tuple[int, int, Decimal, int]]:
+        statement = select(UsageRecord)
         if user_id is not None:
             statement = statement.where(UsageRecord.user_id == user_id)
         if provider_name is not None:
@@ -156,11 +170,19 @@ class UsageRecordCrud:
             statement = statement.where(
                 UsageRecord.user_id.in_(select(User.id).where(User.username.like(f"%{username}%")))
             )
-        total, items = self._list(
-            statement, page, page_size, request_type, model_name, token_display_name, status, channel_id
+        statement = self._filter(
+            statement,
+            request_type=request_type,
+            model_name=model_name,
+            token_display_name=token_display_name,
+            status=status,
+            channel_id=channel_id,
+            start_at=start_at,
+            end_at=end_at,
         )
+        total, items = self._list(statement.options(selectinload(UsageRecord.user)), page, page_size)
         self._attach_upstream_task_ids(items)
-        return total, items
+        return total, items, self._summarize(statement)
 
     def _attach_upstream_task_ids(self, records: list[UsageRecord]) -> None:
         task_ids = [
@@ -177,17 +199,18 @@ class UsageRecordCrud:
             if record.resource_type == "video_task" and record.resource_id is not None:
                 record.__dict__["_upstream_task_id"] = upstream_task_ids.get(record.resource_id)
 
-    def _list(
-        self,
+    @staticmethod
+    def _filter(
         statement,
-        page: int,
-        page_size: int,
+        *,
         request_type: str | None,
         model_name: str | None,
         token_display_name: str | None,
         status: str | None,
         channel_id: UUID | None,
-    ) -> tuple[int, list[UsageRecord]]:
+        start_at: datetime | None,
+        end_at: datetime | None,
+    ):
         if request_type is not None:
             statement = statement.where(UsageRecord.request_type == request_type)
         if model_name is not None:
@@ -198,6 +221,30 @@ class UsageRecordCrud:
             statement = statement.where(UsageRecord.status == status)
         if channel_id is not None:
             statement = statement.where(UsageRecord.channel_id == channel_id)
+        if start_at is not None:
+            statement = statement.where(UsageRecord.created_at >= start_at)
+        if end_at is not None:
+            statement = statement.where(UsageRecord.created_at < end_at)
+        return statement
+
+    def _summarize(self, statement) -> tuple[int, int, Decimal, int]:
+        succeeded = UsageRecordStatus.succeeded
+        row = self._session.execute(
+            statement.with_only_columns(
+                func.count().filter(UsageRecord.status == succeeded),
+                func.count().filter(UsageRecord.status == UsageRecordStatus.refunded),
+                func.coalesce(func.sum(UsageRecord.amount).filter(UsageRecord.status == succeeded), 0),
+                func.coalesce(
+                    func.sum(
+                        func.coalesce(UsageRecord.prompt_tokens, 0) + func.coalesce(UsageRecord.completion_tokens, 0)
+                    ).filter(UsageRecord.status == succeeded),
+                    0,
+                ),
+            )
+        ).one()
+        return int(row[0]), int(row[1]), Decimal(row[2]), int(row[3])
+
+    def _list(self, statement, page: int, page_size: int) -> tuple[int, list[UsageRecord]]:
         total = int(self._session.scalar(sqlalchemy_select(func.count()).select_from(statement.subquery())) or 0)
         items = list(
             self._session.exec(

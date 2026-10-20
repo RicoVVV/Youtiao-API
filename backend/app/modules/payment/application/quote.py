@@ -1,21 +1,38 @@
 """统一支付金额试算服务，负责公共定价和各支付渠道专属金额处理。"""
 
+from uuid import UUID
+
 from app.modules.payment.application.admin.settings import is_payment_compliance_confirmed, payment_settings_runtime
 from app.modules.payment.application.errors import PaymentDisabledError
+from app.modules.payment.application.order_quote import OrderQuoteResolver
 from app.modules.payment.application.payment.stripe import stripe_exchange_rate_service
 from app.modules.payment.application.pricing import PaymentPricingService, money_text
 from app.modules.payment.domain.config import STRIPE
+from sqlmodel import Session
 
 
 class PaymentQuoteApplicationService:
     """编排支付宝、易支付和 Stripe 的统一金额试算流程。"""
 
-    def quote(self, amount: str, payment_channel: str, payment_method: str) -> dict[str, str | None]:
+    def __init__(self, session: Session) -> None:
+        """绑定请求会话，供会员套餐试算读取套餐与用户会员状态。"""
+
+        self._session = session
+
+    def quote(
+        self,
+        user_id: UUID,
+        amount: str | None,
+        membership_plan_id: UUID | None,
+        payment_channel: str,
+        payment_method: str,
+    ) -> dict[str, str | None]:
         """计算指定支付方式的最终展示报价。
 
-        作用：统一校验支付状态、查找启用方式、执行公共定价，并在 Stripe 渠道追加美元换算。
+        作用：统一校验支付状态、查找启用方式、执行充值或会员定价，并在 Stripe 渠道追加美元换算。
         使用位置：由 POST /api/payments/quote 路由调用，属于创建订单前的金额展示步骤。
-        传入参数：amount 为用户希望到账的人民币金额；payment_channel 为支付渠道；payment_method 为渠道内支付方式。
+        传入参数：user_id 为当前用户；amount 为钱包充值金额；membership_plan_id 为会员套餐，二者只提供一个；
+        payment_channel 为支付渠道；payment_method 为渠道内支付方式。
         返回参数：返回钱包到账金额、实际支付金额、币种、倍率、折扣和 Stripe 汇率组成的报价字典。
         """
         runtime = payment_settings_runtime.get()
@@ -27,9 +44,13 @@ class PaymentQuoteApplicationService:
         if provider is None or payment is None or not payment.enabled:
             raise PaymentDisabledError("支付方式未配置")
 
-        # 公共定价继续负责金额范围、用户分组倍率和固定金额折扣，避免改变现有计费规则。
+        # 充值订单继续由公共定价负责金额范围、分组倍率和折扣；会员订单按套餐售价报价。
         pricing = PaymentPricingService(runtime.pricing)
-        quote = pricing.quote(amount, payment=payment)
+        quote = (
+            OrderQuoteResolver(self._session, pricing)
+            .resolve(user_id, {"amount": amount, "membership_plan_id": membership_plan_id}, payment)
+            .quote
+        )
         result: dict[str, str | None] = {
             "payment_channel": payment_channel,
             "payment_method": payment_method,

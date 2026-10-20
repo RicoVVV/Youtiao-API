@@ -14,6 +14,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { Input } from "@/components/ui/input";
 import { Loading } from "@/components/ui/loading";
 import { Pagination } from "@/components/ui/pagination";
@@ -51,7 +52,18 @@ type UsageRecordDetail = UsageRecordItem & {
   upstream_response_payload?: Record<string, unknown> | null;
 };
 
+/** 汇总：与筛选条件一致，不受分页影响；金额/RPM/TPM 为十进制字符串 */
+type UsageRecordSummary = {
+  total_count: number;
+  settled_amount: string;
+  total_tokens: number;
+  average_rpm: string;
+  average_tpm: string;
+};
+
 const PAGE_SIZE = 20;
+
+const RANGE_VALUES = ["today", "last_7_days", "last_30_days", "custom"];
 
 const STATUS_META: Record<
   string,
@@ -102,8 +114,27 @@ const formatTime = (value: string | null, locale: string) =>
 /** 金额展示：纯字符串补齐六位小数（"12.5" → "¥12.500000"），不做数值运算 */
 const formatYuan = (amount: string) => {
   const [intPart = "0", fracPart = ""] = String(amount).trim().split(".");
-  return `$${intPart}.${`${fracPart}000000`.slice(0, 6)}`;
+  return `¥${intPart}.${`${fracPart}000000`.slice(0, 6)}`;
 };
+
+/** 汇总金额：四位小数，兼顾小额消费的精度与卡片紧凑度 */
+const formatSummaryAmount = (amount: string) => {
+  const [intPart = "0", fracPart = ""] = String(amount).trim().split(".");
+  return `¥${intPart}.${`${fracPart}0000`.slice(0, 4)}`;
+};
+
+/** RPM / TPM：后端返回最多 6 位小数字符串，前端按 2 位小数展示 */
+const formatAverage = (value: string) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : "—";
+};
+
+/** datetime-local 值（本地时区）→ 带时区 ISO 字符串，接口要求必须带时区 */
+const toIsoWithTz = (local: string) =>
+  local ? new Date(local).toISOString() : undefined;
+
+/** 取本地自然日零点，用于按日比较（接口按自然日过滤，结束日须晚于开始日） */
+const dayStart = (local: string) => new Date(new Date(local).toDateString()).getTime();
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -415,9 +446,59 @@ export function UsageRecordsPanel() {
   const [tokenFilter, setTokenFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [usernameFilter, setUsernameFilter] = useState("");
+  const [rangeFilter, setRangeFilter] = useState("today");
+  const [startLocal, setStartLocal] = useState("");
+  const [endLocal, setEndLocal] = useState("");
+  const [summary, setSummary] = useState<UsageRecordSummary | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  /**
+   * 时间参数：预设 range 直传；自定义范围按自然日过滤，结束日必须晚于开始日。
+   * 返回 null 表示自定义范围不完整/不合法，此时不发请求。
+   */
+  const timeParams = useMemo(() => {
+    if (rangeFilter !== "custom") return { range: rangeFilter };
+    if (!startLocal || !endLocal) return null;
+    if (dayStart(endLocal) <= dayStart(startLocal)) return null;
+    return { start_at: toIsoWithTz(startLocal), end_at: toIsoWithTz(endLocal) };
+  }, [rangeFilter, startLocal, endLocal]);
+
+  const rangeOptions = useMemo(
+    () =>
+      RANGE_VALUES.map((value) => ({
+        value,
+        label: t(`usageRecords.range.${value}`),
+      })),
+    [t]
+  );
+
+  const summaryCards = useMemo(() => {
+    if (!summary) return [];
+    return [
+      {
+        label: t("usageRecords.summarySettledAmount"),
+        value: formatSummaryAmount(summary.settled_amount),
+      },
+      {
+        label: t("usageRecords.summaryTotalCount"),
+        value: summary.total_count.toLocaleString(),
+      },
+      {
+        label: t("usageRecords.summaryTotalTokens"),
+        value: summary.total_tokens.toLocaleString(),
+      },
+      {
+        label: t("usageRecords.summaryAverageRpm"),
+        value: formatAverage(summary.average_rpm),
+      },
+      {
+        label: t("usageRecords.summaryAverageTpm"),
+        value: formatAverage(summary.average_tpm),
+      },
+    ];
+  }, [summary, t]);
 
   const statusOptions = useMemo(
     () =>
@@ -445,15 +526,24 @@ export function UsageRecordsPanel() {
   const load = useCallback(
     async (p: number) => {
       if (isAdmin === null) return;
+      if (timeParams === null) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError("");
       try {
-        const data = await get<{ items: UsageRecordItem[]; total: number }>(
+        const data = await get<{
+          items: UsageRecordItem[];
+          total: number;
+          summary: UsageRecordSummary;
+        }>(
           `${isAdmin ? "/admin" : ""}/usage/records/list`,
           {
             params: {
               page: p,
               page_size: PAGE_SIZE,
+              ...timeParams,
               request_type: requestTypeFilter.trim() || undefined,
               model_name: modelFilter.trim() || undefined,
               token_display_name: tokenFilter.trim() || undefined,
@@ -468,6 +558,7 @@ export function UsageRecordsPanel() {
         );
         setRecords(data.items);
         setTotal(data.total);
+        setSummary(data.summary);
       } catch (err) {
         setError(err instanceof Error ? err.message : t("usageRecords.loadFailed"));
       } finally {
@@ -476,6 +567,7 @@ export function UsageRecordsPanel() {
     },
     [
       isAdmin,
+      timeParams,
       requestTypeFilter,
       modelFilter,
       tokenFilter,
@@ -522,6 +614,41 @@ export function UsageRecordsPanel() {
         className="flex flex-wrap items-center gap-3 rounded-xl border border-border/60 bg-card/40 p-4"
       >
         <Select
+          value={rangeFilter}
+          onValueChange={(v) => {
+            setRangeFilter(v);
+            setPage(1);
+          }}
+          options={rangeOptions}
+          className="w-auto"
+          aria-label={t("usageRecords.filterByRange")}
+        />
+        {rangeFilter === "custom" && (
+          <>
+            <DateTimePicker
+              value={startLocal}
+              onChange={(v) => {
+                setStartLocal(v);
+                setPage(1);
+              }}
+              placeholder={t("usageRecords.startTime")}
+              className="w-44"
+            />
+            <span className="text-xs text-muted-foreground">
+              {t("usageRecords.rangeTo")}
+            </span>
+            <DateTimePicker
+              value={endLocal}
+              onChange={(v) => {
+                setEndLocal(v);
+                setPage(1);
+              }}
+              placeholder={t("usageRecords.endTime")}
+              className="w-44"
+            />
+          </>
+        )}
+        <Select
           value={requestTypeFilter}
           onValueChange={(v) => {
             setRequestTypeFilter(v);
@@ -565,7 +692,32 @@ export function UsageRecordsPanel() {
           <Search className="size-4" />
           {t("usageRecords.search")}
         </Button>
+        {rangeFilter === "custom" && timeParams === null && (
+          <p className="w-full text-xs text-amber-600 dark:text-amber-400">
+            {!startLocal || !endLocal
+              ? t("usageRecords.rangeIncomplete")
+              : t("usageRecords.endDayAfterStart")}
+          </p>
+        )}
       </form>
+
+      {/* 汇总：紧凑横条，与筛选条件一致，仅统计成功/退款记录，不受分页影响 */}
+      {summary && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 self-start rounded-lg border border-border/60 bg-card/40 px-4 py-2 text-xs">
+          {summaryCards.map((card, i) => (
+            <span
+              key={card.label}
+              className={cn(
+                "flex items-baseline gap-1.5",
+                i > 0 && "border-l border-border/60 pl-5"
+              )}
+            >
+              <span className="text-muted-foreground">{card.label}</span>
+              <span className="font-mono text-sm font-semibold">{card.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 使用记录列表 */}
       <div className="relative overflow-hidden rounded-xl border border-border/60 bg-card/40">

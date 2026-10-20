@@ -11,6 +11,7 @@ from app.modules.payment.application.errors import (
     PaymentBusinessError,
     PaymentDisabledError,
 )
+from app.modules.payment.application.order_quote import OrderQuoteResolver
 from app.modules.payment.application.pricing import PaymentPricingService, money_text
 from app.modules.payment.application.return_url import append_order_no
 from app.modules.payment.application.settlement import PaymentSettlementService
@@ -63,11 +64,14 @@ class EpayPaymentApplicationService:
             payment = runtime.find_payment(EPAY, payload["payment_method"])
             if payment is None or not payment.enabled:
                 raise PaymentDisabledError("支付方式未配置")
-            quote = self._pricing.quote(payload["amount"], payment=payment)
+            quote_result = OrderQuoteResolver(self._session, self._pricing).resolve(user_id, payload, payment)
+            quote = quote_result.quote
             # 每次创建请求都生成独立订单，避免用金额或时间窗口误判用户的正常连续充值。
             order = RechargeOrder(
                 user_id=user_id,
                 order_no=_new_order_no(user_id),
+                order_type=quote_result.order_type,
+                membership_plan_id=quote_result.membership_plan_id,
                 amount=quote.topup_amount,
                 payment_channel="epay",
                 payment_method=payload["payment_method"],
@@ -79,7 +83,7 @@ class EpayPaymentApplicationService:
             action = self._gateway.build_order_form(
                 order.order_no,
                 quote.pay_amount,
-                f"Youtiao API 钱包充值 {money_text(order.amount)} 元",
+                quote_result.subject,
                 payload["payment_method"],
                 final_return_url,
             )

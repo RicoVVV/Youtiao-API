@@ -51,6 +51,27 @@ class UsageStatisticsApplicationService:
             "average_tpm": self._per_minute(total_tokens, total_minutes),
         }
 
+    def record_window(
+        self, *, range_name: str | None, start_at: datetime | None, end_at: datetime | None
+    ) -> tuple[datetime, datetime, int]:
+        start_date, end_date = self._resolve_range(range_name=range_name or "today", start_at=start_at, end_at=end_at)
+        return (
+            self._day_bounds(start_date)[0],
+            self._day_bounds(end_date)[0],
+            (end_date - start_date).days * 24 * 60,
+        )
+
+    def record_summary(self, *, counts: tuple[int, int, Decimal, int], minutes: int) -> dict:
+        succeeded_count, refunded_count, settled_amount, total_tokens = counts
+        total_count = succeeded_count + refunded_count
+        return {
+            "total_count": total_count,
+            "settled_amount": str(settled_amount),
+            "total_tokens": total_tokens,
+            "average_rpm": self._per_minute(total_count, minutes),
+            "average_tpm": self._per_minute(total_tokens, minutes),
+        }
+
     def trend(
         self, *, filters: dict, range_name: str | None, start_at: datetime | None, end_at: datetime | None
     ) -> list[dict]:

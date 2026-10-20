@@ -6,12 +6,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.billing.api.schemas import RedemptionRequest
 from app.modules.billing.application.services import BillingApplicationService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_sidebar_module("billing"))])
 
 
 @router.post("/billing/redemptions/redeem", summary="核销兑换码", tags=["用户账务"])

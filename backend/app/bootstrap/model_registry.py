@@ -3,6 +3,21 @@
 from app.modules.billing.model import BillingAdjustment, Charge, PriceQuote, RedemptionCode
 from app.modules.channels.model.channel import Channel
 from app.modules.channels.model.concurrency import UserConcurrencyLease, UserModelConcurrencyOverride
+from app.modules.membership.model import (
+    MembershipLevel,
+    MembershipLevelGroup,
+    MembershipPlan,
+    MembershipRecord,
+    UserMembership,
+)
+from app.modules.message.model import (
+    Message,
+    MessageRead,
+    MessageTarget,
+    Notification,
+    NotificationDismissal,
+    NotificationTarget,
+)
 from app.modules.models.model import Model, ModelRoute
 from app.modules.monitoring.model import (
     GroupMetricSnapshot,
@@ -15,6 +30,7 @@ from app.modules.monitoring.model import (
 from app.modules.payment.model import PaymentOption
 from app.modules.pricing.model.pricing import PricingModifier, PricingRule
 from app.modules.pricing.model.pricing_item import PricingItem
+from app.modules.site_info.model import SiteInfo
 from app.modules.system_settings.model import SystemSetting
 from app.modules.system_tasks.model.system_task import SystemTask
 from app.modules.usage.model import UsageDailyStatistic, UsageRecord
@@ -64,6 +80,18 @@ __all__ = [
     "MonitorNotification",
     "MonitorResourceRule",
     "ServerMetricSnapshot",
+    "Message",
+    "MessageTarget",
+    "MessageRead",
+    "Notification",
+    "NotificationTarget",
+    "NotificationDismissal",
+    "SiteInfo",
+    "MembershipLevel",
+    "MembershipPlan",
+    "MembershipLevelGroup",
+    "UserMembership",
+    "MembershipRecord",
 ]
 
 

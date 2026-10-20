@@ -6,12 +6,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.wallet.api.schemas import RechargeOrderRequest
 from app.modules.wallet.application.services import WalletApplicationService
 
-router = APIRouter(prefix="/wallet", tags=["用户钱包"])
+router = APIRouter(
+    prefix="/wallet",
+    tags=["用户钱包"],
+    dependencies=[Depends(require_sidebar_module("billing"))],
+)
 
 
 @router.get("/detail", summary="查询钱包详情")

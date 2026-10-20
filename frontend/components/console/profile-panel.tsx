@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Gauge, Wallet } from "lucide-react";
+import { Crown, Gauge, Wallet } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loading } from "@/components/ui/loading";
 import { get } from "@/lib/request";
+import type { UserMembership } from "@/lib/membership";
 import { cn } from "@/lib/utils";
 
 type Profile = {
@@ -18,6 +19,7 @@ type Profile = {
   balance: string;
   usage: string;
   created_at: string;
+  membership: UserMembership;
 };
 
 export function ProfilePanel() {
@@ -65,11 +67,14 @@ export function ProfilePanel() {
     },
   ];
 
+  const membership = profile.membership;
+  const membershipActive = membership?.is_active && membership.level;
+
   const stats = [
     {
       icon: Wallet,
       label: t("profile.balance"),
-      value: `$ ${profile.balance}`,
+      value: `¥ ${profile.balance}`,
       hint: t("profile.balanceHint"),
       iconClass: "from-[#4c6fff] to-[#7c9aff]",
       cardClass: "from-[#4c6fff]/10",
@@ -78,7 +83,7 @@ export function ProfilePanel() {
     {
       icon: Gauge,
       label: t("profile.totalUsage"),
-      value: `$ ${profile.usage}`,
+      value: `¥ ${profile.usage}`,
       hint: t("profile.totalUsageHint"),
       iconClass: "from-[#129dc2] to-[#5cc8e0]",
       cardClass: "from-[#129dc2]/10",
@@ -104,6 +109,15 @@ export function ProfilePanel() {
                   {profile.is_active ? t("profile.statusNormal") : t("profile.statusDisabled")}
                 </Badge>
                 {profile.is_admin && <Badge variant="secondary">{t("profile.adminBadge")}</Badge>}
+                {membershipActive && (
+                  <Badge
+                    variant="secondary"
+                    className="border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  >
+                    <Crown className="mr-1 size-3" />
+                    {membership.level!.name}
+                  </Badge>
+                )}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t("profile.currentAccount")}
@@ -132,6 +146,54 @@ export function ProfilePanel() {
           </div>
         </CardContent>
       </Card>
+
+      {/* 会员状态 */}
+      {membership && (membership.level || membership.is_active) && (
+        <Card className="relative w-full overflow-hidden bg-gradient-to-br from-amber-500/10 to-transparent">
+          <div
+            aria-hidden
+            className="absolute -right-8 -top-8 size-28 rounded-full bg-amber-500/15 blur-2xl"
+          />
+          <CardContent className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#f59e0b] to-[#ec4899] text-white shadow-md">
+              <Crown className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-base font-semibold">
+                  {membership.level?.name ?? t("profile.membershipNone")}
+                </p>
+                <Badge variant={membership.is_active ? "default" : "outline"}>
+                  {membership.is_active
+                    ? t("profile.membershipActive")
+                    : t("profile.membershipExpired")}
+                </Badge>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                {membership.expires_at && (
+                  <span>
+                    {t("profile.membershipExpires", {
+                      date: new Date(membership.expires_at).toLocaleString(locale, {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour12: false,
+                      }),
+                    })}
+                  </span>
+                )}
+                {membership.is_active && membership.groups.length > 0 && (
+                  <span>
+                    {t("profile.membershipGroups", {
+                      names: membership.groups.map((g) => g.name).join("、"),
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 用量统计：与钱包样式保持一致 */}
       <div className="grid gap-4 sm:grid-cols-2">

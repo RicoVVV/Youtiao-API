@@ -32,6 +32,7 @@ _PAYMENT_ORDER_CSV_COLUMNS: tuple[tuple[str, str], ...] = (
     ("order_no", "订单号"),
     ("user_id", "用户ID"),
     ("username", "用户名"),
+    ("order_type", "订单类型"),
     ("topup_amount", "充值金额"),
     ("pay_amount", "实付金额"),
     ("payment_channel", "支付渠道"),
@@ -40,6 +41,10 @@ _PAYMENT_ORDER_CSV_COLUMNS: tuple[tuple[str, str], ...] = (
     ("status", "订单状态"),
     ("created_at", "创建时间"),
     ("paid_at", "支付时间"),
+    ("membership_source", "会员结果"),
+    ("membership_level_name", "会员等级"),
+    ("membership_expires_after", "会员到期时间"),
+    ("membership_bonus_amount", "会员赠送余额"),
 )
 
 

@@ -27,6 +27,7 @@ import { get } from "@/lib/request";
 /* ---------------- 类型（与接入指南一致，金额/比率为十进制字符串） ---------------- */
 
 type UsageStatisticsMetrics = {
+  total_count: number;
   succeeded_count: number;
   refunded_count: number;
   settled_amount: string;
@@ -62,7 +63,7 @@ const PAGE_SIZE = 20;
 /** 金额展示：纯字符串截取两位小数，不做数值运算（十进制字符串安全） */
 const formatYuan = (amount: string) => {
   const [intPart = "0", fracPart = ""] = String(amount).trim().split(".");
-  return `$${intPart}.${`${fracPart}00`.slice(0, 2)}`;
+  return `¥${intPart}.${`${fracPart}00`.slice(0, 2)}`;
 };
 
 /** 成功率："0.9230…" → "92.31%"，仅字符串操作 */
@@ -137,7 +138,7 @@ function OverviewCards({
         },
         {
           label: t("usageStatistics.cardTotalCount"),
-          value: String(data.succeeded_count + data.refunded_count),
+          value: String(data.total_count),
           icon: BarChart3,
           iconClass: "from-success/15 to-success/5 text-success",
         },

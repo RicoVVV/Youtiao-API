@@ -9,6 +9,14 @@ from app.core.config import Settings
 from app.core.errors import AuthenticationProviderUnavailableError, ValidationError
 from app.core.secret_box import SMTP_CONFIG_PURPOSE, derive_fernet
 from app.modules.system_settings.crud import SystemSettingsCrud
+from app.modules.system_settings.domain.sidebar_modules import (
+    GROUP_KEYS,
+    MODULE_KEYS,
+    SIDEBAR_GROUPS,
+    is_module_visible,
+    normalize_visibility,
+    visible_modules,
+)
 from app.modules.system_settings.model import SystemSetting
 
 DEFAULT_SYSTEM_NAME = "Youtiao API"
@@ -106,6 +114,50 @@ class SystemSettingsApplicationService:
                 raise
         return self._admin_projection(setting)
 
+    def get_sidebar_modules(self) -> dict[str, Any]:
+        """返回公开的侧边栏生效可见模块 key，供前端隐藏菜单。"""
+
+        setting = self._get_or_create_default()
+        return {"modules": visible_modules(setting.sidebar_visibility)}
+
+    def get_admin_sidebar_modules(self) -> dict[str, Any]:
+        """返回侧边栏目录与已补全默认值的完整开关表。"""
+
+        return self._sidebar_projection(self._get_or_create_default())
+
+    def update_admin_sidebar_modules(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """整体替换侧边栏可见性；未登记的分组或模块 key 一律拒绝，提交内容即落库内容。"""
+
+        groups = dict(payload["groups"])
+        modules = dict(payload["modules"])
+        for key in sorted(set(groups) - set(GROUP_KEYS)):
+            raise ValidationError(
+                f"侧边栏分组 {key} 不存在",
+                code="sidebar.unknown_group",
+                params={"key": key},
+            )
+        for key in sorted(set(modules) - set(MODULE_KEYS)):
+            raise ValidationError(
+                f"侧边栏模块 {key} 不存在",
+                code="sidebar.unknown_module",
+                params={"key": key},
+            )
+        setting = self._get_or_create_default()
+        try:
+            self._crud.update(setting, {"sidebar_visibility": {"groups": groups, "modules": modules}})
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
+        return self._sidebar_projection(setting)
+
+    def is_sidebar_module_visible(self, module_key: str) -> bool:
+        """判断模块当前是否可见；配置行缺失时视为全部可见，且不写库。"""
+
+        setting = self._crud.get()
+        visibility = setting.sidebar_visibility if setting is not None else {}
+        return is_module_visible(visibility, module_key)
+
     def get_smtp_runtime_config(self) -> dict[str, Any]:
         """返回已解密的 SMTP 运行配置，仅供服务端发信使用，禁止写入响应或日志。"""
 
@@ -188,3 +240,14 @@ class SystemSettingsApplicationService:
         projection.update({field: getattr(setting, field) for field in cls.admin_fields})
         projection["smtp_password_configured"] = bool(setting.smtp_password_ciphertext)
         return projection
+
+    @staticmethod
+    def _sidebar_projection(setting: SystemSetting) -> dict[str, Any]:
+        """返回侧边栏目录与已补全默认值的完整分组、模块开关表。"""
+
+        return {
+            "catalog": {
+                "groups": [{"key": group, "modules": list(modules)} for group, modules in SIDEBAR_GROUPS.items()]
+            },
+            "visibility": normalize_visibility(setting.sidebar_visibility),
+        }

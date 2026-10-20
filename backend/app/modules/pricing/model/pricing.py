@@ -64,7 +64,7 @@ class PricingRule(SQLModelBase, table=True):
     name: str = Field(sa_column=Column(String(128), nullable=False))
     priority: int = Field(sa_column=Column(Integer, nullable=False))
     conditions: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False))
-    currency: str = Field(default="USD", sa_column=Column(String(8), nullable=False, server_default="USD"))
+    currency: str = Field(default="CNY", sa_column=Column(String(8), nullable=False, server_default="CNY"))
     active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, index=True))
 
 

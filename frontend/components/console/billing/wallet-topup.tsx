@@ -80,6 +80,18 @@ type PaidOrder = {
   payment_channel: string;
   payment_method: string;
   paid_at: string;
+  /** 订单类型：recharge 充值 / membership 会员购买 */
+  order_type?: "recharge" | "membership";
+  membership_plan_id?: string | null;
+  /** 会员购买结果；充值订单为 null */
+  membership?: {
+    source: "purchase" | "purchase_converted";
+    level_id: string;
+    level_name: string;
+    expires_before: string | null;
+    expires_after: string | null;
+    bonus_amount: string;
+  } | null;
 };
 
 type BalanceRecord = {
@@ -558,10 +570,26 @@ export function WalletTopup() {
                               : "border-border bg-background"
                           )}
                         >
-                          <span className="font-medium">
-                            {payment.payment_name}
+                          {payment.payment_icon && (
+                            <img
+                              src={payment.payment_icon}
+                              alt=""
+                              className="size-6 shrink-0 rounded object-contain"
+                              loading="lazy"
+                            />
+                          )}
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate font-medium">
+                              {payment.payment_name}
+                            </span>
+                            <span className="truncate text-xs text-muted-foreground">
+                              {channelLabel(t, payment.payment_channel)} /{" "}
+                              {methodLabel(t, payment.payment_channel, payment.payment_method)}
+                            </span>
                           </span>
-                          {selected && <Check className="ml-auto size-4 text-primary" />}
+                          {selected && (
+                            <Check className="ml-auto size-4 shrink-0 text-primary" />
+                          )}
                         </button>
                       );
                     })}
@@ -597,7 +625,7 @@ export function WalletTopup() {
                       {quoting ? (
                         <Loading size="sm" />
                       ) : quote ? (
-                        `$ ${formatAmount(quote.pay_amount)}`
+                        `${quote.pay_currency === "USD" ? "$" : "¥"} ${formatAmount(quote.pay_amount)}`
                       ) : (
                         "—"
                       )}
@@ -701,7 +729,8 @@ export function WalletTopup() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">{t("topup.confirmPay")}</span>
                 <span className="text-2xl font-semibold">
-                  ${formatAmount(quote.pay_amount)}
+                  {quote.pay_currency === "USD" ? "$" : "¥"}
+                  {formatAmount(quote.pay_amount)}
                 </span>
               </div>
               <div className="flex items-center justify-between border-t pt-4">
@@ -756,6 +785,7 @@ export function WalletTopup() {
                 <thead>
                   <tr className="border-b text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <th className="pb-2 font-medium">{t("topup.colOrderNo")}</th>
+                    <th className="pb-2 font-medium">{t("topup.colType")}</th>
                     <th className="pb-2 font-medium">{t("topup.colTopupAmount")}</th>
                     <th className="pb-2 font-medium">{t("topup.colPayAmount")}</th>
                     <th className="pb-2 font-medium">{t("topup.colPaymentMethod")}</th>
@@ -765,14 +795,14 @@ export function WalletTopup() {
                 <tbody className="divide-y divide-border/60">
                   {historyLoading && historyOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-16 text-center text-muted-foreground">
+                      <td colSpan={6} className="py-16 text-center text-muted-foreground">
                         <Loading />
                       </td>
                     </tr>
                   ) : historyOrders.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={6}
                         className="py-16 text-center text-muted-foreground"
                       >
                         {t("topup.historyEmpty")}
@@ -783,6 +813,43 @@ export function WalletTopup() {
                       <tr key={o.order_no} className="text-sm">
                         <td className="whitespace-nowrap py-3 font-mono text-xs text-muted-foreground">
                           {o.order_no}
+                        </td>
+                        <td className="whitespace-nowrap py-3">
+                          {o.order_type === "membership" && o.membership ? (
+                            <div className="space-y-0.5">
+                              <p className="text-xs font-medium">
+                                {t("topup.orderTypeMembership", {
+                                  name: o.membership.level_name,
+                                })}
+                              </p>
+                              {o.membership.source === "purchase_converted" ? (
+                                <p className="text-xs text-amber-600 dark:text-amber-400">
+                                  {t("topup.membershipConverted")}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  {t("topup.membershipValidUntil", {
+                                    date: o.membership.expires_after
+                                      ? new Date(o.membership.expires_after).toLocaleString(locale, {
+                                          year: "numeric",
+                                          month: "2-digit",
+                                          day: "2-digit",
+                                          hour12: false,
+                                        })
+                                      : "—",
+                                  })}
+                                  {Number(o.membership.bonus_amount) > 0 &&
+                                    t("topup.membershipBonusInline", {
+                                      amount: formatAmount(o.membership.bonus_amount),
+                                    })}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              {t("topup.orderTypeRecharge")}
+                            </span>
+                          )}
                         </td>
                         <td className="whitespace-nowrap py-3 font-medium">
                           {formatAmount(o.topup_amount)}

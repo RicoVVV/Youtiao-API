@@ -5,7 +5,7 @@ from typing import Annotated
 from urllib.parse import parse_qsl
 from uuid import UUID
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.payment.api.payment.schemas import (
     OrderStatusResponse,
@@ -17,6 +17,7 @@ from app.modules.payment.api.payment.schemas import (
     ProviderOrderResponse,
     StripeProviderOrderResponse,
 )
+from app.modules.payment.application.icons import PaymentIconApplicationService
 from app.modules.payment.application.payment.alipay import PaymentApplicationService
 from app.modules.payment.application.payment.epay import EpayPaymentApplicationService
 from app.modules.payment.application.payment.orders import PaymentOrderQueryService
@@ -33,24 +34,56 @@ _MAX_CALLBACK_FIELDS = 32
 _MAX_STRIPE_BODY_SIZE = 1024 * 1024
 
 
-@router.get("/topups/detail", response_model=PaymentTopupResponse, summary="获取充值配置")
+@router.get(
+    "/topups/detail",
+    response_model=PaymentTopupResponse,
+    dependencies=[Depends(require_sidebar_module("billing"))],
+    summary="获取充值配置",
+)
 def topup_info(
     _: Annotated[UUID, Depends(get_user_id)], session: Annotated[Session, Depends(get_db)]
 ) -> dict[str, object]:
     return PaymentApplicationService(session).get_topup_info()
 
 
-@router.post(
-    "/quote", response_model=PaymentQuoteResponse, response_model_exclude_none=True, summary="统一试算支付金额"
+@router.get(
+    "/icon",
+    response_class=Response,
+    responses={200: {"content": {"image/svg+xml": {}}}},
+    summary="查询支付方式图标",
 )
-def quote_payment(payload: PaymentQuoteRequest, _: Annotated[UUID, Depends(get_user_id)]) -> dict[str, str | None]:
-    return PaymentQuoteApplicationService().quote(**payload.model_dump())
+def get_payment_icon(
+    payment_channel: Annotated[str, Query(min_length=1, max_length=32, description="支付渠道标识")],
+    payment_method: Annotated[str, Query(min_length=1, max_length=32, description="渠道内支付方式")],
+) -> Response:
+    svg = PaymentIconApplicationService().get_icon_svg(payment_channel, payment_method)
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.post(
+    "/quote",
+    response_model=PaymentQuoteResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_sidebar_module("billing"))],
+    summary="统一试算支付金额",
+)
+def quote_payment(
+    payload: PaymentQuoteRequest,
+    user_id: Annotated[UUID, Depends(get_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict[str, str | None]:
+    return PaymentQuoteApplicationService(session).quote(user_id, **payload.model_dump())
 
 
 @router.post(
     "/alipay-orders/create",
     response_model=ProviderOrderResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_sidebar_module("billing"))],
     summary="创建支付宝官方订单",
 )
 def create_alipay_order(
@@ -86,14 +119,24 @@ async def alipay_notify(request: Request, session: Annotated[Session, Depends(ge
         return PlainTextResponse("failure")
 
 
-@router.get("/orders/detail", response_model=OrderStatusResponse, summary="查询充值订单状态")
+@router.get(
+    "/orders/detail",
+    response_model=OrderStatusResponse,
+    dependencies=[Depends(require_sidebar_module("billing"))],
+    summary="查询充值订单状态",
+)
 def get_order(
     order_no: str, user_id: Annotated[UUID, Depends(get_user_id)], session: Annotated[Session, Depends(get_db)]
-) -> dict[str, str]:
+) -> dict[str, object]:
     return PaymentApplicationService(session).get_order(user_id, order_no)
 
 
-@router.get("/orders/paid", response_model=PaidRechargeOrderListResponse, summary="分页查询已支付充值订单")
+@router.get(
+    "/orders/paid",
+    response_model=PaidRechargeOrderListResponse,
+    dependencies=[Depends(require_sidebar_module("billing"))],
+    summary="分页查询已支付充值订单",
+)
 def list_paid_orders(
     user_id: Annotated[UUID, Depends(get_user_id)],
     session: Annotated[Session, Depends(get_db)],
@@ -107,6 +150,7 @@ def list_paid_orders(
     "/epay-orders/create",
     response_model=ProviderOrderResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_sidebar_module("billing"))],
     summary="创建易支付充值订单",
 )
 def create_epay_order(
@@ -136,6 +180,7 @@ async def epay_notify(request: Request, session: Annotated[Session, Depends(get_
     "/stripe-orders/create",
     response_model=StripeProviderOrderResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_sidebar_module("billing"))],
     summary="创建 Stripe 美元充值订单",
 )
 def create_stripe_order(

@@ -25,7 +25,7 @@ class PricingRuleCreateRequest(BaseModel):
     priority: int
     conditions: list[dict[str, Any]] = Field(default_factory=list)
     items: list[PricingItemRequest] = Field(min_length=1)
-    currency: str = Field(default="USD", min_length=1, max_length=8)
+    currency: str = Field(default="CNY", min_length=1, max_length=8)
     active: bool = True
 
 

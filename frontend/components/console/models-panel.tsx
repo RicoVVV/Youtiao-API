@@ -322,7 +322,7 @@ function ModelMatchPreviewCard({
       {rules.map((rule, ri) => (
         <div key={ri} className="space-y-0.5">
           <p className="text-muted-foreground">
-            {rule.name}（{rule.currency ?? preview.currency ?? "USD"}）
+            {rule.name}（{rule.currency ?? preview.currency ?? "CNY"}）
           </p>
           <ul className="space-y-0.5">
             {rule.items.map((item, ii) => (

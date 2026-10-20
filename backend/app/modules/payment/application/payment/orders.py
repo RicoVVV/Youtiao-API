@@ -2,8 +2,10 @@
 
 from uuid import UUID
 
+from app.modules.membership.application.services import MembershipQueryService
 from app.modules.payment.application.pricing import money_text
 from app.modules.payment.crud.orders import PaymentCrud
+from app.modules.wallet.model import RechargeOrderType
 from sqlmodel import Session
 
 
@@ -20,21 +22,28 @@ class PaymentOrderQueryService:
         """
 
         self._crud = PaymentCrud(session)
+        self._memberships = MembershipQueryService(session)
 
     def list_paid_orders(self, user_id: UUID, page: int, page_size: int) -> dict[str, object]:
-        """返回当前用户分页后的已支付充值订单。
+        """返回当前用户分页后的已支付订单，会员订单附带会员购买结果。
 
-        作用：读取已支付订单并转换为前端需要的订单号、金额、支付渠道、方式和支付时间。
+        作用：读取已支付订单并转换为前端需要的订单号、金额、支付渠道、方式、支付时间和会员结果。
         使用位置：由 GET /api/payments/orders/paid 路由调用，是用户查询历史充值订单的业务步骤。
         传入参数：user_id 为当前 JWT 对应的用户标识；page 为从 1 开始的页码；page_size 为每页返回数量。
         返回参数：返回包含 items、total、page 和 page_size 的字典，供 FastAPI 按响应 DTO 序列化。
         """
 
         total, orders = self._crud.list_paid_orders_for_user(user_id, page, page_size)
+        results = self._memberships.get_order_results(
+            {order.id for order in orders if order.order_type == RechargeOrderType.membership}
+        )
         return {
             "items": [
                 {
                     "order_no": order.order_no,
+                    "order_type": RechargeOrderType(order.order_type).value,
+                    "membership_plan_id": order.membership_plan_id,
+                    "membership": results.get(order.id),
                     "topup_amount": money_text(order.amount),
                     "pay_amount": money_text(order.expected_pay_amount or order.amount),
                     "payment_channel": order.payment_channel,

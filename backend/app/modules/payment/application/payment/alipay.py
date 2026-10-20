@@ -13,13 +13,15 @@ from app.modules.payment.application.errors import (
     PaymentDisabledError,
     PaymentOrderNotFoundError,
 )
+from app.modules.payment.application.order_quote import OrderQuoteResolver
 from app.modules.payment.application.pricing import PaymentPricingService, money_text
 from app.modules.payment.application.return_url import append_order_no
 from app.modules.payment.application.settlement import PaymentSettlementService
 from app.modules.payment.crud.orders import PaymentCrud
 from app.modules.payment.domain.config import ALIPAY_OFFICIAL, AlipayOfficialRuntimeConfig
+from app.modules.payment.icons import payment_icon_url
 from app.modules.payment.infrastructure.alipay.gateway import AlipayPageGateway
-from app.modules.wallet.model import RechargeOrder
+from app.modules.wallet.model import RechargeOrder, RechargeOrderType
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,9 @@ class PaymentApplicationService:
                 "payment_name": payment.payment_name,
                 "payment_channel": payment.payment_channel,
                 "payment_method": payment.payment_method,
-                "payment_icon": payment.payment_icon,
+                "payment_icon": payment.payment_icon
+                or payment_icon_url(payment.payment_channel, payment.payment_method)
+                or "",
                 "enabled": payment.enabled,
                 "min_topup": str(payment.min_topup) if payment.min_topup is not None else None,
                 "max_topup": str(payment.max_topup) if payment.max_topup is not None else None,
@@ -146,10 +150,13 @@ class PaymentApplicationService:
         payment = payment_settings_runtime.get().find_payment(ALIPAY_OFFICIAL, "page_pay")
         if payment is None or not payment.enabled:
             raise PaymentDisabledError("支付方式未配置")
-        quote = self._pricing.quote(payload["amount"], payment=payment)
+        quote_result = OrderQuoteResolver(self._session, self._pricing).resolve(user_id, payload, payment)
+        quote = quote_result.quote
         order = RechargeOrder(
             user_id=user_id,
             order_no=_new_order_no(user_id),
+            order_type=quote_result.order_type,
+            membership_plan_id=quote_result.membership_plan_id,
             amount=quote.topup_amount,
             payment_channel="alipay_official",
             payment_method="page_pay",
@@ -160,7 +167,7 @@ class PaymentApplicationService:
         # 先完成表单构造，再写入订单，避免留下无法提交给网关的 pending 订单。
         # return_url 必须先写入表单参数，才能纳入支付宝 RSA2 签名。
         payment_action = self._gateway.build_order_form(
-            order.order_no, quote.pay_amount, f"Youtiao API 钱包充值 {money_text(order.amount)} 元", final_return_url
+            order.order_no, quote.pay_amount, quote_result.subject, final_return_url
         )
         self._crud.add_order(order)
         self._crud.flush()
@@ -187,7 +194,7 @@ class PaymentApplicationService:
             callback, "alipay_official", "page_pay", {"TRADE_SUCCESS", "TRADE_FINISHED"}, "支付宝官方充值"
         )
 
-    def get_order(self, user_id: UUID, order_no: str) -> dict[str, str]:
+    def get_order(self, user_id: UUID, order_no: str) -> dict[str, object]:
         """读取当前用户自己的支付订单状态。
 
         作用：为支付完成页轮询提供归属隔离后的订单信息。
@@ -205,6 +212,8 @@ class PaymentApplicationService:
             "topup_amount": money_text(order.amount),
             "pay_amount": money_text(order.expected_pay_amount or order.amount),
             "currency": "CNY",
+            "order_type": RechargeOrderType(order.order_type).value,
+            "membership_plan_id": order.membership_plan_id,
         }
 
     def _require_payment_enabled(self) -> None:

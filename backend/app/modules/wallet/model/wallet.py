@@ -32,6 +32,12 @@ class BalanceRecordType(str, enum.Enum):
     redemption = "redemption"
     usage = "usage"
     refund = "refund"
+    membership_bonus = "membership_bonus"
+
+
+class RechargeOrderType(str, enum.Enum):
+    recharge = "recharge"
+    membership = "membership"
 
 
 class RechargeOrderStatus(str, enum.Enum):
@@ -132,13 +138,25 @@ class BalanceRecord(SQLModelBase, table=True):
             ForeignKey("redemption_codes.id", ondelete="RESTRICT"), unique=True, comment="关联的兑换码核销记录"
         ),
     )
+    membership_record_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("membership_records.id", ondelete="RESTRICT"), index=True, comment="关联的会员变动流水"
+        ),
+    )
 
 
 class RechargeOrder(SQLModelBase, table=True):
-    """在线支付充值订单，不承载管理员授予或兑换码入账。"""
+    """在线支付订单，承载钱包充值与会员购买，不承载管理员授予或兑换码入账。"""
 
     __tablename__ = "recharge_orders"
-    __table_args__ = (UniqueConstraint("order_no", name="uq_recharge_orders_order_no"),)
+    __table_args__ = (
+        UniqueConstraint("order_no", name="uq_recharge_orders_order_no"),
+        CheckConstraint(
+            "(order_type = 'membership') = (membership_plan_id IS NOT NULL)",
+            name="ck_recharge_orders_membership_plan",
+        ),
+    )
     id: UUID = Field(default_factory=uuid4, primary_key=True, description="充值订单主键")
     created_at: datetime | None = Field(
         default=None,
@@ -148,7 +166,22 @@ class RechargeOrder(SQLModelBase, table=True):
         sa_column=Column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True, comment="充值用户")
     )
     order_no: str = Field(sa_column=Column(String(64), nullable=False, comment="业务充值订单号"))
-    amount: Decimal = Field(sa_column=Column(Numeric(18, 6), nullable=False, comment="充值人民币金额"))
+    order_type: RechargeOrderType = Field(
+        default=RechargeOrderType.recharge,
+        sa_column=Column(
+            Enum(RechargeOrderType, name="recharge_order_type"),
+            nullable=False,
+            server_default=RechargeOrderType.recharge.value,
+            comment="订单类型：recharge 钱包充值，membership 会员购买",
+        ),
+    )
+    membership_plan_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(ForeignKey("membership_plans.id", ondelete="RESTRICT"), comment="会员订单购买的套餐"),
+    )
+    amount: Decimal = Field(
+        sa_column=Column(Numeric(18, 6), nullable=False, comment="充值人民币金额；会员订单为下单冻结的套餐售价")
+    )
     payment_channel: str = Field(sa_column=Column(String(32), nullable=False, comment="支付渠道"))
     payment_method: str = Field(
         default="page_pay", sa_column=Column(String(32), nullable=False, server_default="page_pay", comment="支付方式")

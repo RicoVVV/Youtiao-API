@@ -26,12 +26,15 @@ def list_usage_records(
     _: Annotated[UUID, Depends(get_admin_user_id)],
     session: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    total, items = UsageApplicationService(session).list_admin(**payload.model_dump())
+    total, items, summary = UsageApplicationService(session).list_admin(
+        range_name=payload.range, **payload.model_dump(exclude={"range"})
+    )
     return {
         "items": [usage_record_response(item, detail=False, include_admin_fields=True) for item in items],
         "total": total,
         "page": payload.page,
         "page_size": payload.page_size,
+        "summary": summary,
     }
 
 

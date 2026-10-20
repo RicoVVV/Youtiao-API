@@ -195,7 +195,7 @@ export const OPTIONAL_SOURCE_KINDS = new Set<PricingItemKind>([
 ]);
 
 /**
- * Token 计费项：unit_amount 单位为 USD / 1M Token，
+ * Token 计费项：unit_amount 单位为 CNY / 1M Token，
  * 前端直接读写接口返回的数值，不做每 Token 与每百万 Token 之间的换算。
  */
 export const TOKEN_ITEM_KINDS = new Set<PricingItemKind>([
@@ -539,7 +539,7 @@ export function PricingRuleFormDialog({
         unit_amount: item.unit_amount ?? "",
       }))
   );
-  const [currency, setCurrency] = useState(rule?.currency ?? "USD");
+  const [currency, setCurrency] = useState(rule?.currency ?? "CNY");
   const [conditionRows, setConditionRows] = useState<ConditionRow[]>(() =>
     (rule?.conditions ?? []).map((c) => ({
       field: c.field,
@@ -923,7 +923,7 @@ export function PricingRuleFormDialog({
                   id="rule-currency"
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
-                  placeholder="USD"
+                  placeholder="CNY"
                   autoComplete="off"
                 />
               </div>

@@ -8,8 +8,10 @@ from fastapi import APIRouter
 from app.modules.admin.api.billing.router import router as billing_router
 from app.modules.admin.api.channels.router import router as channels_router
 from app.modules.admin.api.concurrency.router import router as user_concurrency_router
+from app.modules.admin.api.messages.router import router as messages_router
 from app.modules.admin.api.models.router import router as models_router
 from app.modules.admin.api.monitoring.router import router as monitoring_router
+from app.modules.admin.api.notifications.router import router as notifications_router
 from app.modules.admin.api.pricing_modifiers.router import router as pricing_modifiers_router
 from app.modules.admin.api.pricing_rules.router import router as pricing_rules_router
 from app.modules.admin.api.provider_templates.router import router as provider_templates_router
@@ -18,7 +20,9 @@ from app.modules.admin.api.token.router import router as token_router
 from app.modules.admin.api.usage.router import router as usage_router
 from app.modules.admin.api.users.router import router as users_router
 from app.modules.admin.api.videos.router import router as videos_router
+from app.modules.membership.api.admin_router import router as membership_router
 from app.modules.payment.api.admin.router import router as payment_router
+from app.modules.site_info.api import admin_router as site_info_router
 from app.modules.system_settings.api import admin_router as system_settings_router
 
 router = APIRouter()
@@ -31,9 +35,13 @@ router.include_router(channels_router, prefix="/admin")
 router.include_router(billing_router, prefix="/admin")
 router.include_router(models_router, prefix="/admin")
 router.include_router(monitoring_router, prefix="/admin")
+router.include_router(messages_router)
+router.include_router(notifications_router)
 router.include_router(pricing_rules_router, prefix="/admin")
 router.include_router(pricing_modifiers_router, prefix="/admin")
 router.include_router(provider_templates_router, prefix="/admin")
 router.include_router(user_concurrency_router, prefix="/admin")
 router.include_router(payment_router)
+router.include_router(membership_router)
 router.include_router(system_settings_router)
+router.include_router(site_info_router)

@@ -29,30 +29,32 @@ import { get, getCachedProfile, getToken, setCachedProfile } from "@/lib/request
 import { stripLocale } from "@/lib/path-utils";
 import { isLocale } from "@/i18n/config";
 import { LocaleLink } from "@/components/locale-link";
+import { useSidebarModules } from "@/lib/use-sidebar-modules";
 
-/** 鎺у埗鍙拌彍鍗曪細鍒嗙粍閰嶇疆 */
+/** 控制台菜单：分组配置；moduleKey 对应侧边栏模块目录 key，用于按可见配置过滤 */
 const MENU_GROUPS = [
    {
     titleKey: "nav.chat",
     items: [
-      { href: "/console/playground", labelKey: "nav.playground", icon: MessageSquare },
-      { href: "/console/canvas", labelKey: "nav.canvas", icon: ChartScatter },
+      { href: "/console/playground", labelKey: "nav.playground", icon: MessageSquare, moduleKey: "playground" },
+      { href: "/console/canvas", labelKey: "nav.canvas", icon: ChartScatter, moduleKey: "canvas" },
     ],
   },
   {
     titleKey: "nav.general",
     items: [
-      { href: "/console/usage", labelKey: "nav.usage", icon: BarChart3 },
-      { href: "/console/monitoring", labelKey: "nav.monitoring", icon: Activity },
-      { href: "/console/api-keys", labelKey: "nav.apiKeys", icon: KeyRound },
-      { href: "/console/usage-records", labelKey: "nav.usageRecords", icon: ScrollText },
+      { href: "/console/overview", labelKey: "nav.overview", icon: LayoutDashboard },
+      { href: "/console/usage", labelKey: "nav.usage", icon: BarChart3, moduleKey: "usage" },
+      { href: "/console/monitoring", labelKey: "nav.monitoring", icon: Activity, moduleKey: "monitoring" },
+      { href: "/console/api-keys", labelKey: "nav.apiKeys", icon: KeyRound, moduleKey: "api-keys" },
+      { href: "/console/usage-records", labelKey: "nav.usageRecords", icon: ScrollText, moduleKey: "usage-records" },
     ],
   },
   {
     titleKey: "nav.account",
     items: [
-      { href: "/console/billing", labelKey: "nav.billing", icon: Receipt },
-      { href: "/console/profile", labelKey: "nav.profile", icon: UserRound },
+      { href: "/console/billing", labelKey: "nav.billing", icon: Receipt, moduleKey: "billing" },
+      { href: "/console/profile", labelKey: "nav.profile", icon: UserRound, moduleKey: "profile" },
     ],
   },
   {
@@ -101,11 +103,27 @@ export function ConsoleSidebar() {
     (g) => !("adminOnly" in g) || (mounted && isAdmin)
   );
 
+  // 全站侧边栏模块可见配置：null 表示未加载（按全部可见兜底，避免闪烁）；
+  // 已加载时隐藏未列出的模块，某分组全部不可见时不渲染该分组标题
+  const visibleModules = useSidebarModules();
+  const visibleGroups = groups
+    .map((group) => ({
+      ...group,
+      items:
+        visibleModules === null
+          ? group.items
+          : group.items.filter(
+              (item) =>
+                !("moduleKey" in item) || visibleModules.includes(item.moduleKey as string)
+            ),
+    }))
+    .filter((group) => group.items.length > 0);
+
   return (
     <aside className="fixed bottom-0 left-0 top-14 z-40 flex w-60 flex-col border-r border-border bg-background/80 text-foreground backdrop-blur-sm">
-      {/* 鑿滃崟鍖?*/}
+      {/* 鉴权分组 */}
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.titleKey}>
             <p className="mb-1.5 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
               {t(group.titleKey)}

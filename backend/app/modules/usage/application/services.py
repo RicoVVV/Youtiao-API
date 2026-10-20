@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from app.core.errors import NotFoundError, ValidationError
+from app.modules.usage.application.statistics_services import UsageStatisticsApplicationService
 from app.modules.usage.crud.usage_record_crud import UsageRecordCrud
 from app.modules.usage.model import UsageRecord, UsageRecordStatus
 from app.modules.wallet.application.services import WalletApplicationService
@@ -13,6 +14,7 @@ from sqlmodel import Session
 
 class UsageApplicationService:
     def __init__(self, session: Session) -> None:
+        self._session = session
         self._crud = UsageRecordCrud(session)
         self._wallet = WalletApplicationService(session)
 
@@ -364,8 +366,15 @@ class UsageApplicationService:
             record.upstream_response_payload = dict(upstream_response_payload)
         return record
 
-    def list_owned(self, **kwargs):
-        return self._crud.list_owned(**kwargs)
+    def list_owned(
+        self, *, range_name: str | None, start_at: datetime | None, end_at: datetime | None, **kwargs
+    ) -> tuple[int, list[UsageRecord], dict]:
+        statistics = UsageStatisticsApplicationService(self._session)
+        window_start, window_end, minutes = statistics.record_window(
+            range_name=range_name, start_at=start_at, end_at=end_at
+        )
+        total, items, counts = self._crud.list_owned(start_at=window_start, end_at=window_end, **kwargs)
+        return total, items, statistics.record_summary(counts=counts, minutes=minutes)
 
     def get_owned(self, *, usage_record_id: UUID, user_id: UUID) -> UsageRecord:
         record = self._crud.get_owned(usage_record_id=usage_record_id, user_id=user_id)
@@ -373,8 +382,15 @@ class UsageApplicationService:
             raise NotFoundError("使用记录不存在")
         return record
 
-    def list_admin(self, **kwargs):
-        return self._crud.list_admin(**kwargs)
+    def list_admin(
+        self, *, range_name: str | None, start_at: datetime | None, end_at: datetime | None, **kwargs
+    ) -> tuple[int, list[UsageRecord], dict]:
+        statistics = UsageStatisticsApplicationService(self._session)
+        window_start, window_end, minutes = statistics.record_window(
+            range_name=range_name, start_at=start_at, end_at=end_at
+        )
+        total, items, counts = self._crud.list_admin(start_at=window_start, end_at=window_end, **kwargs)
+        return total, items, statistics.record_summary(counts=counts, minutes=minutes)
 
     def get(self, usage_record_id: UUID) -> UsageRecord | None:
         record = self._crud.get(usage_record_id)

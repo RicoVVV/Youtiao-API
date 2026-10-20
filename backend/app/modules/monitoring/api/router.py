@@ -6,12 +6,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.monitoring.api.schemas import GroupMonitorListQuery, GroupMonitorTrendQuery
 from app.modules.monitoring.application.query_services import GroupMonitorQueryApplicationService
 
-router = APIRouter(prefix="/monitoring", tags=["分组监控"])
+router = APIRouter(
+    prefix="/monitoring",
+    tags=["分组监控"],
+    dependencies=[Depends(require_sidebar_module("monitoring"))],
+)
 
 
 @router.get("/groups/list", summary="查询可用分组监控指标")

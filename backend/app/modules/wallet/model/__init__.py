@@ -5,6 +5,7 @@ from app.modules.wallet.model.wallet import (
     BalanceRecordType,
     RechargeOrder,
     RechargeOrderStatus,
+    RechargeOrderType,
     Wallet,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "BalanceRecordType",
     "RechargeOrder",
     "RechargeOrderStatus",
+    "RechargeOrderType",
     "Wallet",
 ]

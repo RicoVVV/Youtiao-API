@@ -65,6 +65,15 @@ class PaymentPricingService:
             raise PaymentAmountInvalidError("实际支付金额不能小于 0.01 元")
         return PaymentQuote(topup_amount=amount, pay_amount=pay_amount, group_ratio=ratio, discount=discount)
 
+    @staticmethod
+    def quote_membership(price: Decimal) -> PaymentQuote:
+        """按会员套餐售价生成报价，不应用充值金额范围、分组倍率和档位折扣。"""
+
+        amount = price.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+        if amount < MONEY_QUANTUM:
+            raise PaymentAmountInvalidError("实际支付金额不能小于 0.01 元")
+        return PaymentQuote(topup_amount=amount, pay_amount=amount, group_ratio=Decimal("1"), discount=Decimal("1"))
+
     def topup_info(self, enabled: bool) -> dict[str, object]:
         """构造充值页面需要的展示配置。
 

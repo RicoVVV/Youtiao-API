@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
-from app.core.auth import get_user_id
+from app.core.auth import get_user_id, require_sidebar_module
 from app.core.database import get_db
 from app.modules.user.api.token.schemas import (
     TokenCopyResponse,
@@ -23,7 +23,12 @@ from app.modules.user.application.token.services import TokenApplicationService
 router = APIRouter(prefix="/user", tags=["用户访问令牌"])
 
 
-@router.get("/token/list", response_model=TokenListResponse, summary="分页查询 Token 列表")
+@router.get(
+    "/token/list",
+    response_model=TokenListResponse,
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="分页查询 Token 列表",
+)
 def list_tokens(
     user_id: Annotated[UUID, Depends(get_user_id)],
     session: Annotated[Session, Depends(get_db)],
@@ -51,7 +56,11 @@ def copy_token(
     return TokenCopyResponse(token_id=token_id, token=token)
 
 
-@router.post("/token/create", summary="创建 Token")
+@router.post(
+    "/token/create",
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="创建 Token",
+)
 def create_token(
     payload: TokenRequest,
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -64,7 +73,11 @@ def create_token(
     )
 
 
-@router.post("/token/delete", summary="软删除 Token")
+@router.post(
+    "/token/delete",
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="软删除 Token",
+)
 def delete_token(
     payload: TokenDeletionRequest,
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -77,7 +90,11 @@ def delete_token(
     )
 
 
-@router.post("/token/disable", summary="禁用 Token")
+@router.post(
+    "/token/disable",
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="禁用 Token",
+)
 def disable_token(
     payload: TokenDeletionRequest,
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -90,7 +107,11 @@ def disable_token(
     )
 
 
-@router.post("/token/enable", summary="启用 Token")
+@router.post(
+    "/token/enable",
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="启用 Token",
+)
 def enable_token(
     payload: TokenDeletionRequest,
     user_id: Annotated[UUID, Depends(get_user_id)],
@@ -103,7 +124,12 @@ def enable_token(
     )
 
 
-@router.get("/token/group/list", response_model=list[TokenGroupItem], summary="查询可选 Token 分组")
+@router.get(
+    "/token/group/list",
+    response_model=list[TokenGroupItem],
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="查询可选 Token 分组",
+)
 def list_available_groups(
     user_id: Annotated[UUID, Depends(get_user_id)], session: Annotated[Session, Depends(get_db)]
 ) -> list[TokenGroupItem]:
@@ -115,7 +141,11 @@ def list_available_groups(
     ]
 
 
-@router.post("/token/groups/update", summary="更新 Token 分组绑定")
+@router.post(
+    "/token/groups/update",
+    dependencies=[Depends(require_sidebar_module("api-keys"))],
+    summary="更新 Token 分组绑定",
+)
 def update_token_groups(
     payload: TokenGroupsUpdateRequest,
     user_id: Annotated[UUID, Depends(get_user_id)],

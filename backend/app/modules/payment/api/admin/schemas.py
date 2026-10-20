@@ -3,6 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
+from app.modules.payment.api.payment.schemas import MembershipOrderResultResponse
 from pydantic import BaseModel, Field
 
 
@@ -33,6 +34,7 @@ class AdminPaymentOrderItem(BaseModel):
     order_no: str = Field(description="本地业务订单号")
     user_id: UUID = Field(description="充值用户标识")
     username: str = Field(description="充值用户名")
+    order_type: str = Field(description="订单类型：recharge 钱包充值，membership 会员购买")
     topup_amount: str = Field(description="充值到账人民币金额")
     pay_amount: str = Field(description="实际支付金额")
     payment_channel: str = Field(description="支付渠道标识")
@@ -41,6 +43,9 @@ class AdminPaymentOrderItem(BaseModel):
     status: str = Field(description="订单状态")
     created_at: datetime | None = Field(default=None, description="订单创建时间")
     paid_at: datetime | None = Field(default=None, description="支付成功时间")
+    membership: MembershipOrderResultResponse | None = Field(
+        default=None, description="会员订单的购买结果；充值订单为空"
+    )
 
 
 class AdminPaymentOrderListResponse(BaseModel):

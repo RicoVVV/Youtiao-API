@@ -7,8 +7,8 @@ import {
   ArrowLeft,
   ChevronRight,
   CreditCard,
+  Crown,
   FileText,
-  Route,
   Settings,
   Shield,
   ShieldCheck,
@@ -25,7 +25,10 @@ const MENU_ITEMS = [
   {
     key: "branding",
     icon: Settings,
-    children: [{ href: "/system/settings", labelKey: "settings" }],
+    children: [
+      { href: "/system/settings", labelKey: "settings" },
+      { href: "/system/sidebar-modules", labelKey: "sidebarModules" },
+    ],
   },
   {
     key: "auth",
@@ -40,9 +43,24 @@ const MENU_ITEMS = [
       { href: "/system/payment-records", labelKey: "paymentRecords" },
     ],
   },
-  { key: "models", icon: Route, children: [] },
+  {
+    key: "membership",
+    icon: Crown,
+    children: [
+      { href: "/system/membership-levels", labelKey: "membershipLevels" },
+      { href: "/system/user-memberships", labelKey: "userMemberships" },
+    ],
+  },
   { key: "security", icon: Shield, children: [] },
-  { key: "consoleContent", icon: FileText, children: [] },
+  {
+    key: "consoleContent",
+    icon: FileText,
+    children: [
+      { href: "/system/messages", labelKey: "messages" },
+      { href: "/system/notifications", labelKey: "notifications" },
+      { href: "/system/site-info", labelKey: "siteInfo" },
+    ],
+  },
   { key: "ops", icon: Wrench, children: [] },
 ] as const;
 

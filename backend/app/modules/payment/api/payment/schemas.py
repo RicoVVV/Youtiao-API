@@ -12,23 +12,31 @@ _AMOUNT_PATTERN = re.compile(r"^\d+(?:\.\d{1,2})?$")
 
 
 class AmountRequest(BaseModel):
-    """定义用户试算或下单时提交的充值金额。"""
+    """定义用户试算或下单时提交的充值金额或会员套餐，二者必须且只能提供一个。"""
 
-    amount: StrictStr = Field(min_length=1, max_length=32)
+    amount: StrictStr | None = Field(default=None, min_length=1, max_length=32, description="钱包充值金额")
+    membership_plan_id: UUID | None = Field(default=None, description="购买的会员套餐 ID")
 
     @field_validator("amount")
     @classmethod
-    def validate_amount(cls, value: str) -> str:
+    def validate_amount(cls, value: str | None) -> str | None:
         """限制金额为最多两位小数的普通十进制字符串。
 
         作用：在 HTTP 边界拒绝浮点数、科学计数法和不确定精度的金额输入。
         使用位置：Pydantic 解析 AmountRequest 及其子模型时自动调用。
-        传入参数：value 为请求 JSON 中的 amount 字符串。
+        传入参数：value 为请求 JSON 中的 amount 字符串，可为空。
         返回参数：返回经格式确认的原金额字符串；格式错误时抛出 ValueError。
         """
-        if not _AMOUNT_PATTERN.fullmatch(value):
+        if value is not None and not _AMOUNT_PATTERN.fullmatch(value):
             raise ValueError("充值金额必须是最多两位小数的正数")
         return value
+
+    @model_validator(mode="after")
+    def validate_order_target(self) -> "AmountRequest":
+        """校验充值金额与会员套餐必须且只能提供一个。"""
+        if (self.amount is None) == (self.membership_plan_id is None):
+            raise ValueError("amount 与 membership_plan_id 必须且只能提供一个")
+        return self
 
 
 class ProviderOrderRequest(AmountRequest):
@@ -268,7 +276,7 @@ class PaymentDisplayMethodView(BaseModel):
     payment_name: str = Field(description="充值页显示的支付方式名称")
     payment_channel: str = Field(description="支付渠道标识")
     payment_method: str = Field(description="原始支付方式值")
-    payment_icon: str = Field(description="支付方式图标 HTTPS 地址")
+    payment_icon: str = Field(description="支付方式图标地址：管理员配置的 HTTPS 地址，未配置时为内置图标的相对地址")
     enabled: bool = Field(description="是否允许用户使用该支付方式")
     min_topup: str | None = Field(description="可选的支付方式最低充值金额")
     max_topup: str | None = Field(description="可选的支付方式最高充值金额")
@@ -375,6 +383,17 @@ class TopupInfoResponse(BaseModel):
     pricing: PaymentPricingView
 
 
+class MembershipOrderResultResponse(BaseModel):
+    """定义会员订单结算后的会员购买结果。"""
+
+    source: str = Field(description="purchase 开通/续费/升级；purchase_converted 构成降级已转入余额")
+    level_id: UUID = Field(description="购买的会员等级 ID")
+    level_name: str | None = Field(default=None, description="会员等级名称")
+    expires_before: datetime | None = Field(default=None, description="变更前到期时间")
+    expires_after: datetime | None = Field(default=None, description="变更后到期时间")
+    bonus_amount: str = Field(description="本次赠送的钱包余额")
+
+
 class OrderStatusResponse(BaseModel):
     """定义当前用户可查询的支付订单状态。"""
 
@@ -383,12 +402,19 @@ class OrderStatusResponse(BaseModel):
     topup_amount: str
     pay_amount: str
     currency: str
+    order_type: str = Field(description="订单类型：recharge 钱包充值，membership 会员购买")
+    membership_plan_id: UUID | None = Field(default=None, description="会员订单购买的套餐 ID")
 
 
 class PaidRechargeOrderItemResponse(BaseModel):
-    """定义用户已支付充值订单列表中的单条展示数据。"""
+    """定义用户已支付订单列表中的单条展示数据。"""
 
     order_no: str = Field(description="本地业务订单号")
+    order_type: str = Field(description="订单类型：recharge 钱包充值，membership 会员购买")
+    membership_plan_id: UUID | None = Field(default=None, description="会员订单购买的套餐 ID")
+    membership: MembershipOrderResultResponse | None = Field(
+        default=None, description="会员订单的购买结果；充值订单为空"
+    )
     topup_amount: str = Field(description="充值到账人民币金额")
     pay_amount: str = Field(description="实际支付金额")
     payment_channel: str = Field(description="支付渠道标识")

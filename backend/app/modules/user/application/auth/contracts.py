@@ -27,3 +27,4 @@ class UserProfileData:
     created_at: datetime
     balance: str
     usage: str
+    membership: dict

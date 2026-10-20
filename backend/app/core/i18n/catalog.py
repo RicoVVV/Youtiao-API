@@ -308,6 +308,7 @@ MESSAGES_EN: dict[str, str] = {
     "支付方式不能为空且不能重复": "Payment methods cannot be empty or contain duplicates",
     "支付方式充值金额范围无效": "Invalid top-up amount range for the payment method",
     "支付方式图标必须使用 HTTPS 地址": "Payment method icons must use HTTPS URLs",
+    "支付方式图标不存在": "Payment method icon not found",
     "支付方式未启用": "The payment method is not enabled",
     "支付方式未在指定支付渠道中启用": ("The payment method is not enabled for the specified payment channel"),
     "支付方式未配置": "The payment method is not configured",
@@ -632,6 +633,44 @@ MESSAGES_EN: dict[str, str] = {
     "响应体保持该协议原生形状，不额外包装。": (
         "The response body keeps the native shape of the protocol and is not wrapped further."
     ),
+    # 站内消息、通知与站点信息
+    "消息不存在": "Message not found",
+    "通知不存在": "Notification not found",
+    "站点信息不存在": "Site info not found",
+    "消息必须对全体用户可见或至少有一个定向目标": (
+        "A message must be visible to all users or target at least one audience"
+    ),
+    "通知必须对全体用户可见或至少有一个定向目标": (
+        "A notification must be visible to all users or target at least one audience"
+    ),
+    "消息过期时间必须晚于生效时间": "The message expiry time must be later than the start time",
+    "通知过期时间必须晚于生效时间": "The notification expiry time must be later than the start time",
+    "定向分组不存在": "Targeted group not found",
+    "定向用户不存在": "Targeted user not found",
+    # 会员系统
+    "amount 与 membership_plan_id 必须且只能提供一个": (
+        "Exactly one of amount and membership_plan_id must be provided"
+    ),
+    "专享分组不可重复": "Exclusive groups must not be duplicated",
+    "专享分组不存在": "Exclusive group not found",
+    "专享分组必须为受限分组": "Exclusive groups must be restricted groups",
+    "会员套餐不存在": "Membership plan not found",
+    "会员套餐价格未配置": "Membership plan price is not configured",
+    "会员套餐已停用": "Membership plan is disabled",
+    "会员等级不存在": "Membership level not found",
+    "会员等级编码已存在": "Membership level code already exists",
+    "公开等级的套餐售价必须大于 0": "Plans of public levels must have a price greater than 0",
+    "同一等级每种时长只能配置一个套餐": "A level can have only one plan per period",
+    "当前会员等级更高，不支持购买低等级会员": (
+        "Your current membership level is higher; purchasing a lower level is not supported"
+    ),
+    "用户当前没有有效会员": "The user has no active membership",
+    "该等级仍有有效会员，不能删除": "This level still has active members and cannot be deleted",
+    "该功能模块已被管理员关闭": "This feature has been disabled by the administrator",
+    # 其他校验文案
+    "分组价格倍率不合法": "Invalid group price multiplier",
+    "开始时间不能晚于结束时间": "The start time cannot be later than the end time",
+    "渠道配置的最高 TLS 版本只支持 1.2 或 1.3": "The channel's maximum TLS version supports only 1.2 or 1.3",
 }
 
 CODE_MESSAGES: dict[str, str] = {
@@ -673,4 +712,8 @@ CODE_MESSAGES: dict[str, str] = {
     "payment.callback_url_https_required": "The {provider} callback address must use an HTTPS URL",
     "payment.return_url_https_required": "The {provider} return URL must use an HTTPS URL",
     "payment.rsa_key_format_invalid": "Invalid {provider} RSA key format",
+    "payment.order_query_span_exceeded": "The payment order query time span cannot exceed {days} days",
+    # 侧边栏模块目录校验
+    "sidebar.unknown_group": "Unknown sidebar group: {key}",
+    "sidebar.unknown_module": "Unknown sidebar module: {key}",
 }

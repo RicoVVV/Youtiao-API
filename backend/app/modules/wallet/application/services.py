@@ -26,6 +26,13 @@ class WalletApplicationService:
         """读取用户钱包。"""
         return self._crud.get_wallet_by_user_id(user_id)
 
+    def get_balance_summary(self, user_id: UUID) -> dict[str, str]:
+        """读取用户余额与累计已结算用量；无钱包时以零值返回，供概览聚合使用。"""
+
+        wallet = self._crud.get_wallet_by_user_id(user_id)
+        balance = wallet.balance if wallet is not None else Decimal("0")
+        return {"balance": str(balance), "usage": f"{self._crud.sum_settled_usage(user_id):.2f}"}
+
     def get_wallet_detail(self, user_id: UUID) -> dict:
         wallet = self._crud.get_wallet_by_user_id(user_id)
         if wallet is None:
@@ -49,6 +56,7 @@ class WalletApplicationService:
         redemption_code_id: UUID | None = None,
         recharge_order_id: UUID | None = None,
         usage_record_id: UUID | None = None,
+        membership_record_id: UUID | None = None,
     ) -> BalanceRecord:
         """锁定钱包后增加余额，并同步写入一条正向余额明细。"""
         if amount <= 0:
@@ -70,6 +78,7 @@ class WalletApplicationService:
                 redemption_code_id=redemption_code_id,
                 recharge_order_id=recharge_order_id,
                 usage_record_id=usage_record_id,
+                membership_record_id=membership_record_id,
             )
         )
 

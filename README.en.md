@@ -57,11 +57,17 @@ Ark (Doubao Seed), FAL, MiniMax, and more.
 | Multi-protocol compatibility | Exposes OpenAI (text / image / video / models / Responses), Anthropic Messages, Gemini, Volcengine Ark Responses, and DashScope text & multimodal protocol surfaces |
 | Smart routing & concurrency | Multi-channel routing, model name mapping, per-group concurrency limits, and peak load distribution |
 | Pricing & billing | Precise metering by tokens, image count, and video duration, with pricing rules, multipliers, and cache-billing items |
-| Users & tokens | Registration and login, token groups, and per-key permission and quota management |
-| Wallet & payments | Balance, top-up, and redemption codes, supporting Alipay (official), Epay, and Stripe |
-| Usage statistics | Call records and daily aggregated statistics, filterable by type, model, key, and status, queryable in real time |
+| Users & tokens | Registration and login, registration email verification, token groups, and per-key permission and quota management |
+| Wallet & payments | Balance, top-up, redemption codes, and payment-record query/export, supporting Alipay (official), Epay, and Stripe |
+| Payment method icons | Built-in SVG icons for Alipay, WeChat Pay, UnionPay, bank cards, and USDT, with optional custom HTTPS icons per payment method |
+| Membership | Membership levels and plans, exclusive token groups, online subscribe / renew / upgrade, downgrade-to-balance conversion, plus admin grants, revocations, and membership records |
+| Usage statistics | Call records and daily aggregates with Token / RPM / TPM metrics, time-range filters, and summaries |
+| Messages & notifications | Announcements / in-app messages, on-site popup notifications, read tracking, and unread badges |
+| Site overview | A user dashboard aggregating daily usage, balance, messages, and site info; admins manage site-info shortcuts |
+| Sidebar module permissions | Admins can disable console entries by group or individual module, and the API rejects non-admin access to disabled modules |
 | Monitoring & alerting | Group / channel business metrics and server resource monitoring, with DingTalk webhook alerts |
-| Console & i18n | Next.js management console, model marketplace, API docs, and a chat canvas, with built-in Chinese and English |
+| Channel compatibility | Per-channel maximum TLS version (1.2 / 1.3) |
+| Console & i18n | Next.js management console, model marketplace, API docs, chat canvas, and system admin pages, in Chinese and English |
 
 ## Protocols and endpoints
 
@@ -129,9 +135,9 @@ Youtiao-API/
 Backend domain modules: `admin` (admin APIs), `user` (auth / tokens / profile),
 `channels` (channels and routing), `providers` (upstream adapters), `generation` (text / image
 generation), `video` (async video tasks), `pricing` and `billing` (pricing and billing),
-`wallet` and `payment` (wallet and payments), `usage` (usage statistics), `monitoring`
-(monitoring and alerting), `marketplace` and `model_catalog` (model marketplace and matching),
-`system_settings` and `system_tasks` (system settings and scheduled tasks).
+`wallet` and `payment` (wallet and payments), `membership` (membership), `usage` (usage statistics), `monitoring` (monitoring and alerting), `marketplace` and `model_catalog` (model marketplace and matching),
+`message` (messages and notifications), `overview` and `site_info` (site overview and site info),
+`system_settings` and `system_tasks` (system settings, sidebar module visibility, and scheduled tasks).
 
 ## Quick Start
 

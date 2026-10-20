@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field
 
 from app.core.database import SQLModelBase
@@ -42,3 +44,12 @@ class SystemSetting(SQLModelBase, table=True):
     smtp_password_ciphertext: str = Field(default="", sa_column=Column(Text(), nullable=False, server_default=""))
     smtp_from_email: str = Field(default="", sa_column=Column(String(320), nullable=False, server_default=""))
     smtp_from_name: str = Field(default="", sa_column=Column(String(255), nullable=False, server_default=""))
+    sidebar_visibility: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+            server_default=text("'{}'::jsonb"),
+            comment="控制台侧边栏分组与模块可见性覆盖，缺失键视为可见",
+        ),
+    )

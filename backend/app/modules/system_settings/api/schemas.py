@@ -67,3 +67,37 @@ class SystemSettingsUpdateRequest(BaseModel):
         if value is None or not str(value).strip():
             return ""
         return str(TypeAdapter(AnyHttpUrl).validate_python(value))
+
+
+class SidebarModulesResponse(BaseModel):
+    """公开侧边栏可见性响应，仅返回生效可见的模块 key。"""
+
+    modules: list[str]
+
+
+class SidebarGroupCatalogItem(BaseModel):
+    key: str
+    modules: list[str]
+
+
+class SidebarCatalogResponse(BaseModel):
+    groups: list[SidebarGroupCatalogItem]
+
+
+class SidebarVisibilityResponse(BaseModel):
+    groups: dict[str, bool]
+    modules: dict[str, bool]
+
+
+class AdminSidebarModulesResponse(BaseModel):
+    """管理员侧边栏配置响应：目录 + 已补全默认值的完整开关表。"""
+
+    catalog: SidebarCatalogResponse
+    visibility: SidebarVisibilityResponse
+
+
+class SidebarModulesUpdateRequest(BaseModel):
+    """整体替换侧边栏可见性；两个字段均必填，空 map 表示该维度全部可见。"""
+
+    groups: dict[str, bool] = Field(description="分组 key → 是否可见")
+    modules: dict[str, bool] = Field(description="模块 key → 是否可见")
