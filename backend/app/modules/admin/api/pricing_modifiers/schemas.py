@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 class PricingModifierCreateRequest(BaseModel):
     pricing_rule_id: UUID
     name: str = Field(min_length=1, max_length=128)
-    priority: int
     conditions: list[dict[str, Any]] = Field(default_factory=list)
     effect_type: Literal["multiplier", "fixed_price"]
     effect_payload: dict[str, Any] = Field(default_factory=dict)

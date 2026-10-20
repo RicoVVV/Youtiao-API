@@ -22,11 +22,6 @@ class PricingModifierCrud:
             sqlalchemy_select(PricingModifier).where(PricingModifier.id == modifier_id).with_for_update()
         )
 
-    def max_priority(self, *, pricing_rule_id: UUID) -> int | None:
-        return self._session.scalar(
-            select(func.max(PricingModifier.priority)).where(PricingModifier.pricing_rule_id == pricing_rule_id)
-        )
-
     def exists_name(self, *, pricing_rule_id: UUID, name: str) -> bool:
         return (
             self._session.scalar(
@@ -37,17 +32,6 @@ class PricingModifierCrud:
             )
             is not None
         )
-
-    def has_priority_conflict(
-        self, *, pricing_rule_id: UUID, priority: int, exclude_modifier_id: UUID | None = None
-    ) -> bool:
-        statement = select(PricingModifier.id).where(
-            PricingModifier.pricing_rule_id == pricing_rule_id,
-            PricingModifier.priority == priority,
-        )
-        if exclude_modifier_id is not None:
-            statement = statement.where(PricingModifier.id != exclude_modifier_id)
-        return self._session.scalar(statement) is not None
 
     def list_page(
         self, *, pricing_rule_id: UUID | None, page: int, page_size: int

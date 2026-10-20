@@ -121,7 +121,7 @@ const methodLabel = (t: Translate, ch: string, m: string) => {
   if (m === "page_pay") return t("topup.methodPagePay");
   return m === "wxpay" ? t("topup.methodWxpay") : t("topup.methodAlipay");
 };
-const payCurrency = (ch: string) => (ch === "stripe" ? "$" : "¥");
+const payCurrency = () => "¥";
 
 /** 余额变动类型标签，未识别类型显示原始值 */
 const recordTypeLabel = (t: Translate, type: string) =>
@@ -210,6 +210,8 @@ export function WalletTopup() {
   // 当前试算结果
   const [quote, setQuote] = useState<AmountQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
+  // 记录试算失败原因，点击充值时提示真实原因
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   // 选中的支付方式（channel:method 作为 key），null 表示默认第一个
   const [selectedPaymentKey, setSelectedPaymentKey] = useState<string | null>(null);
@@ -274,6 +276,7 @@ export function WalletTopup() {
   useEffect(() => {
     if (!effectiveAmount || !activePayment) {
       setQuote(null);
+      setQuoteError(null);
       return;
     }
     const seq = ++quoteSeqRef.current;
@@ -286,11 +289,14 @@ export function WalletTopup() {
       .then((res) => {
         if (seq !== quoteSeqRef.current) return;
         setQuote(res);
+        setQuoteError(null);
       })
       .catch((err) => {
         if (seq !== quoteSeqRef.current) return;
+        const reason = err instanceof Error ? err.message : t("topup.quoteFailed");
         setQuote(null);
-        toast.warning(err instanceof Error ? err.message : t("topup.quoteFailed"));
+        setQuoteError(reason);
+        toast.warning(reason);
       })
       .finally(() => {
         if (seq === quoteSeqRef.current) setQuoting(false);
@@ -409,7 +415,8 @@ export function WalletTopup() {
       return;
     }
     if (!quote) {
-      toast.warning(t("topup.noQuote"));
+      // 优先展示试算失败的真实原因，避免笼统的“没有实际支付金额”
+      toast.warning(quoteError ?? t("topup.noQuote"));
       return;
     }
     if (!activeMethod) {
@@ -625,7 +632,7 @@ export function WalletTopup() {
                       {quoting ? (
                         <Loading size="sm" />
                       ) : quote ? (
-                        `${quote.pay_currency === "USD" ? "$" : "¥"} ${formatAmount(quote.pay_amount)}`
+                        `¥ ${formatAmount(quote.pay_amount)}`
                       ) : (
                         "—"
                       )}
@@ -729,8 +736,7 @@ export function WalletTopup() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">{t("topup.confirmPay")}</span>
                 <span className="text-2xl font-semibold">
-                  {quote.pay_currency === "USD" ? "$" : "¥"}
-                  {formatAmount(quote.pay_amount)}
+                  ¥{formatAmount(quote.pay_amount)}
                 </span>
               </div>
               <div className="flex items-center justify-between border-t pt-4">
@@ -855,7 +861,7 @@ export function WalletTopup() {
                           {formatAmount(o.topup_amount)}
                         </td>
                         <td className="whitespace-nowrap py-3">
-                          {payCurrency(o.payment_channel)}{formatAmount(o.pay_amount)}
+                          {payCurrency()}{formatAmount(o.pay_amount)}
                         </td>
                         <td className="whitespace-nowrap py-3">
                           {channelLabel(t, o.payment_channel)} / {methodLabel(t, o.payment_channel, o.payment_method)}
@@ -999,14 +1005,14 @@ export function WalletTopup() {
                                   : "text-emerald-600 dark:text-emerald-400"
                               )}
                             >
-                              {isNegative ? "" : "+"}$
+                              {isNegative ? "" : "+"}¥
                               {formatAmount(r.change_amount)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-3 text-center text-muted-foreground tabular-nums">
-                              ${formatAmount(r.balance_before)}
+                              ¥{formatAmount(r.balance_before)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-3 text-center font-medium tabular-nums">
-                              ${formatAmount(r.balance_after)}
+                              ¥{formatAmount(r.balance_after)}
                             </td>
                             <td
                               className="truncate px-4 py-3 text-center text-muted-foreground"

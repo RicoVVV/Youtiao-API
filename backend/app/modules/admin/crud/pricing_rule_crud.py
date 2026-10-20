@@ -24,11 +24,12 @@ class PricingRuleCrud:
     def get_for_update(self, rule_id: UUID) -> PricingRule | None:
         return self._session.scalar(sqlalchemy_select(PricingRule).where(PricingRule.id == rule_id).with_for_update())
 
-    def max_priority(self, *, model_id: UUID, token_group_id: int) -> int | None:
-        return self._session.scalar(
-            select(func.max(PricingRule.priority)).where(
-                PricingRule.model_id == model_id,
-                PricingRule.token_group_id == token_group_id,
+    def list_in_scope(self, *, model_id: UUID, token_group_id: int) -> list[PricingRule]:
+        return list(
+            self._session.exec(
+                select(PricingRule)
+                .where(PricingRule.model_id == model_id, PricingRule.token_group_id == token_group_id)
+                .order_by(PricingRule.priority)
             )
         )
 
@@ -43,18 +44,6 @@ class PricingRuleCrud:
             )
             is not None
         )
-
-    def has_priority_conflict(
-        self, *, model_id: UUID, token_group_id: int, priority: int, exclude_rule_id: UUID | None = None
-    ) -> bool:
-        statement = select(PricingRule.id).where(
-            PricingRule.model_id == model_id,
-            PricingRule.token_group_id == token_group_id,
-            PricingRule.priority == priority,
-        )
-        if exclude_rule_id is not None:
-            statement = statement.where(PricingRule.id != exclude_rule_id)
-        return self._session.scalar(statement) is not None
 
     def list_page(
         self, *, model_id: UUID | None, keyword: str | None, page: int, page_size: int

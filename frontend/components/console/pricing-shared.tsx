@@ -51,7 +51,7 @@ export type PricingModifier = {
 
 export type DefaultPricingRule = Pick<
   PricingRule,
-  "name" | "priority" | "conditions" | "items"
+  "name" | "conditions" | "items"
 >;
 
 /** 条件编辑行：值以字符串暂存，提交时按字段类型解析 */
@@ -212,7 +212,6 @@ export type PricingRule = {
   model_id: string;
   token_group_id: number;
   name: string;
-  priority: number;
   conditions: PricingCondition[];
   items: PricingRuleItemView[];
   currency: string;
@@ -530,7 +529,6 @@ export function PricingRuleFormDialog({
   const [groupId, setGroupId] = useState(
     rule ? String(rule.token_group_id) : ""
   );
-  const [priority, setPriority] = useState(String(rule?.priority ?? 0));
   const [items, setItems] = useState<PricingRuleItem[]>(
     // 接口的 null 表示未定价，表单内归一化为空串，避免空值参与 trim/Input 受控判断
     () =>
@@ -564,7 +562,6 @@ export function PricingRuleFormDialog({
     (templateRule?: DefaultPricingRule) => {
       if (isEdit || !templateRule) return;
       setName(templateRule.name);
-      setPriority(String(templateRule.priority));
       setConditionRows(
         templateRule.conditions.map((condition) => ({
           field: condition.field,
@@ -697,11 +694,6 @@ export function PricingRuleFormDialog({
       toast.warning(t("errGroup"));
       return;
     }
-    const priorityNum = Number(priority);
-    if (!Number.isInteger(priorityNum)) {
-      toast.warning(t("errPriority"));
-      return;
-    }
     const requiredKinds = REQUIRED_SUBJECT_KINDS[modelType] ?? [];
     const activeSubjectItems = items.filter(
       (it) => it.active && requiredKinds.includes(it.kind)
@@ -792,7 +784,6 @@ export function PricingRuleFormDialog({
           model_id: modelId,
           token_group_id: Number(groupId),
           name: name.trim(),
-          priority: priorityNum,
           conditions,
           currency: currency.trim(),
           active,
@@ -902,31 +893,17 @@ export function PricingRuleFormDialog({
                 emptyText={t("noGroup")}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label htmlFor="rule-priority" className="text-sm font-medium">
-                  {t("priority")}
-                </label>
-                <Input
-                  id="rule-priority"
-                  type="number"
-                  step={1}
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="rule-currency" className="text-sm font-medium">
-                  {t("currency")}
-                </label>
-                <Input
-                  id="rule-currency"
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  placeholder="CNY"
-                  autoComplete="off"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label htmlFor="rule-currency" className="text-sm font-medium">
+                {t("currency")}
+              </label>
+              <Input
+                id="rule-currency"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                placeholder="CNY"
+                autoComplete="off"
+              />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
@@ -1285,12 +1262,6 @@ export function PricingRuleDetailDialog({
                 {groupName(detail.token_group_id)}
               </dd>
             </div>
-            <div className="flex items-start justify-between gap-4">
-              <dt className="shrink-0 text-muted-foreground">{t("priority")}</dt>
-              <dd className="text-right font-mono text-xs">
-                {detail.priority}
-              </dd>
-            </div>
             <div className="space-y-1.5">
               <dt className="text-muted-foreground">{t("itemsLabel")}</dt>
               <dd className="space-y-1.5">
@@ -1499,7 +1470,7 @@ export function PricingModifierDrawer({ rule, onClose }: { rule: PricingRule; on
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
           {loading ? <div className="flex justify-center py-12"><Loading size="lg" /></div> : modifiers.length === 0 ? <p className="rounded-lg border border-dashed border-border/70 py-8 text-center text-sm text-muted-foreground">{t("noModifiers")}</p> : <div className="space-y-3">
             {modifiers.map((modifier) => <div key={modifier.id} className="rounded-lg border border-border/60 p-4">
-              <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><p className="text-sm font-medium">{modifier.name}</p><Badge variant={modifier.active ? "default" : "destructive"}>{modifier.active ? t("itemActive") : t("itemInactive")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{t("modifierMeta", { priority: modifier.priority, effect: modifier.effect_type === "multiplier" ? t("effectMultiplier", { value: String(modifier.effect_payload.factor ?? "-") }) : t("effectFixed", { value: String(modifier.effect_payload.amount ?? "-") }), scope: t(`scope.${modifier.scope_type}`) })}</p>{modifier.conditions.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{modifier.conditions.map((c) => conditionLabel(t, c)).join(t("condSep"))}</p>}</div><div className="flex gap-1"><Button variant="outline" size="sm" onClick={() => setEditing(modifier)}><Pencil className="size-3.5" />{t("edit")}</Button><Button variant="outline" size="sm" onClick={() => void copy(modifier)}><Copy className="size-3.5" /></Button><Button variant="outline" size="sm" className="text-destructive" onClick={() => void remove(modifier)}><Trash2 className="size-3.5" /></Button></div></div>
+              <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><p className="text-sm font-medium">{modifier.name}</p><Badge variant={modifier.active ? "default" : "destructive"}>{modifier.active ? t("itemActive") : t("itemInactive")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{t("modifierMeta", { effect: modifier.effect_type === "multiplier" ? t("effectMultiplier", { value: String(modifier.effect_payload.factor ?? "-") }) : t("effectFixed", { value: String(modifier.effect_payload.amount ?? "-") }), scope: t(`scope.${modifier.scope_type}`) })}</p>{modifier.conditions.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{modifier.conditions.map((c) => conditionLabel(t, c)).join(t("condSep"))}</p>}</div><div className="flex gap-1"><Button variant="outline" size="sm" onClick={() => setEditing(modifier)}><Pencil className="size-3.5" />{t("edit")}</Button><Button variant="outline" size="sm" onClick={() => void copy(modifier)}><Copy className="size-3.5" /></Button><Button variant="outline" size="sm" className="text-destructive" onClick={() => void remove(modifier)}><Trash2 className="size-3.5" /></Button></div></div>
             </div>)}
           </div>}
         </div>
@@ -1514,7 +1485,6 @@ export function PricingModifierFormDialog({ rule, modifier, onClose, onSaved }: 
   const { t } = useTranslation("console", { keyPrefix: "pricing" });
   const isEdit = modifier !== null;
   const [name, setName] = useState(modifier?.name ?? "");
-  const [priority, setPriority] = useState(String(modifier?.priority ?? 0));
   const [effectType, setEffectType] = useState<PricingModifierEffectType>(modifier?.effect_type ?? "multiplier");
   const [amount, setAmount] = useState(String(modifier?.effect_payload[modifier?.effect_type === "multiplier" ? "factor" : "amount"] ?? ""));
   const [scopeType, setScopeType] = useState<PricingModifierScopeType>(modifier?.scope_type ?? "all_items");
@@ -1541,7 +1511,7 @@ export function PricingModifierFormDialog({ rule, modifier, onClose, onSaved }: 
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !Number.isInteger(Number(priority)) || !/^\d+(\.\d+)?$/.test(amount)) { toast.warning(t("errModifierForm")); return; }
+    if (!name.trim() || !/^\d+(\.\d+)?$/.test(amount)) { toast.warning(t("errModifierForm")); return; }
     const effectiveScope = effectType === "fixed_price" ? "item_ids" : scopeType;
     if (effectiveScope === "item_ids" && (itemIds.length === 0 || (effectType === "fixed_price" && itemIds.length !== 1))) { toast.warning(effectType === "fixed_price" ? t("errFixedPriceOne") : t("errSelectItem")); return; }
     if (effectiveScope === "item_kind" && itemKinds.length === 0) { toast.warning(t("errSelectKind")); return; }
@@ -1550,7 +1520,7 @@ export function PricingModifierFormDialog({ rule, modifier, onClose, onSaved }: 
     try {
       await post(isEdit ? "/admin/pricing-modifiers/update" : "/admin/pricing-modifiers/create", {
         ...(isEdit ? { pricing_modifier_id: modifier.id } : { pricing_rule_id: rule.id }),
-        name: name.trim(), priority: Number(priority), conditions: parsed, effect_type: effectType,
+        name: name.trim(), conditions: parsed, effect_type: effectType,
         effect_payload: effectType === "multiplier" ? { factor: amount } : { amount }, scope_type: effectiveScope,
         scope_item_ids: effectiveScope === "item_ids" ? itemIds : [], scope_item_kinds: effectiveScope === "item_kind" ? itemKinds : [], active,
       });
@@ -1559,5 +1529,5 @@ export function PricingModifierFormDialog({ rule, modifier, onClose, onSaved }: 
   };
 
   const toggle = <T extends string,>(values: T[], value: T, setValues: (next: T[]) => void, single = false) => setValues(single ? [value] : values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
-  return <div className="fixed inset-0 z-[90] flex justify-end bg-black/50" onMouseDown={(e) => { overlayMouseDown.current = e.target === e.currentTarget; }} onClick={(e) => { if (overlayMouseDown.current && e.target === e.currentTarget) onClose(); }}><div className="flex h-full w-full max-w-lg flex-col border-l bg-background shadow-2xl" onClick={(e) => e.stopPropagation()}><div className="flex items-center justify-between border-b px-6 py-4"><h2 className="text-base font-semibold">{isEdit ? t("modifierEditTitle") : t("modifierCreateTitle")}</h2><button type="button" onClick={onClose}><X className="size-4" /></button></div><form onSubmit={submit} className="flex min-h-0 flex-1 flex-col"><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("modifierNamePlaceholder")} autoComplete="off" /><Input type="number" step={1} value={priority} onChange={(e) => setPriority(e.target.value)} placeholder={t("priority")} /><div className="grid grid-cols-2 gap-3"><Select value={effectType} onValueChange={(value) => { const next = value as PricingModifierEffectType; setEffectType(next); if (next === "fixed_price") setScopeType("item_ids"); }} options={[{ value: "multiplier", label: t("effectTypeMultiplier") }, { value: "fixed_price", label: t("effectTypeFixed") }]} /><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={effectType === "multiplier" ? t("amountEgMultiplier") : t("amountEgFixed")} /></div><div className="space-y-2"><p className="text-sm font-medium">{t("scopeLabel")}</p><Select value={effectType === "fixed_price" ? "item_ids" : scopeType} onValueChange={(value) => setScopeType(value as PricingModifierScopeType)} disabled={effectType === "fixed_price"} options={[{ value: "all_items", label: t("scope.all_items") }, { value: "item_kind", label: t("scope.item_kind") }, { value: "item_ids", label: t("scope.item_ids") }]} />{(effectType === "fixed_price" || scopeType === "item_ids") && <div className="space-y-1">{rule.items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={itemIds.includes(item.id)} onChange={() => toggle(itemIds, item.id, setItemIds, effectType === "fixed_price")} />{item.label}（{itemKindLabel(t, item.kind)}）</label>)}</div>}{scopeType === "item_kind" && <div className="space-y-1">{kinds.map((kind) => <label key={kind} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={itemKinds.includes(kind)} onChange={() => toggle(itemKinds, kind, setItemKinds)} />{itemKindLabel(t, kind)}</label>)}</div>}</div><div className="space-y-2"><p className="text-sm font-medium">{t("conditionsLabel")}</p><ConditionsEditor rows={conditions} onChange={setConditions} fieldOptions={fields} /></div><div className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{t("itemActive")}</span><Switch checked={active} onCheckedChange={setActive} /></div></div><div className="flex justify-end gap-2 border-t px-6 py-3"><Button type="button" variant="outline" onClick={onClose}>{t("cancel")}</Button><Button type="submit" disabled={submitting}>{submitting && <Loading size="sm" />}{isEdit ? t("save") : t("create")}</Button></div></form></div></div>;
+  return <div className="fixed inset-0 z-[90] flex justify-end bg-black/50" onMouseDown={(e) => { overlayMouseDown.current = e.target === e.currentTarget; }} onClick={(e) => { if (overlayMouseDown.current && e.target === e.currentTarget) onClose(); }}><div className="flex h-full w-full max-w-lg flex-col border-l bg-background shadow-2xl" onClick={(e) => e.stopPropagation()}><div className="flex items-center justify-between border-b px-6 py-4"><h2 className="text-base font-semibold">{isEdit ? t("modifierEditTitle") : t("modifierCreateTitle")}</h2><button type="button" onClick={onClose}><X className="size-4" /></button></div><form onSubmit={submit} className="flex min-h-0 flex-1 flex-col"><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("modifierNamePlaceholder")} autoComplete="off" /><div className="grid grid-cols-2 gap-3"><Select value={effectType} onValueChange={(value) => { const next = value as PricingModifierEffectType; setEffectType(next); if (next === "fixed_price") setScopeType("item_ids"); }} options={[{ value: "multiplier", label: t("effectTypeMultiplier") }, { value: "fixed_price", label: t("effectTypeFixed") }]} /><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={effectType === "multiplier" ? t("amountEgMultiplier") : t("amountEgFixed")} /></div><div className="space-y-2"><p className="text-sm font-medium">{t("scopeLabel")}</p><Select value={effectType === "fixed_price" ? "item_ids" : scopeType} onValueChange={(value) => setScopeType(value as PricingModifierScopeType)} disabled={effectType === "fixed_price"} options={[{ value: "all_items", label: t("scope.all_items") }, { value: "item_kind", label: t("scope.item_kind") }, { value: "item_ids", label: t("scope.item_ids") }]} />{(effectType === "fixed_price" || scopeType === "item_ids") && <div className="space-y-1">{rule.items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={itemIds.includes(item.id)} onChange={() => toggle(itemIds, item.id, setItemIds, effectType === "fixed_price")} />{item.label}（{itemKindLabel(t, item.kind)}）</label>)}</div>}{scopeType === "item_kind" && <div className="space-y-1">{kinds.map((kind) => <label key={kind} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={itemKinds.includes(kind)} onChange={() => toggle(itemKinds, kind, setItemKinds)} />{itemKindLabel(t, kind)}</label>)}</div>}</div><div className="space-y-2"><p className="text-sm font-medium">{t("conditionsLabel")}</p><ConditionsEditor rows={conditions} onChange={setConditions} fieldOptions={fields} /></div><div className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{t("itemActive")}</span><Switch checked={active} onCheckedChange={setActive} /></div></div><div className="flex justify-end gap-2 border-t px-6 py-3"><Button type="button" variant="outline" onClick={onClose}>{t("cancel")}</Button><Button type="submit" disabled={submitting}>{submitting && <Loading size="sm" />}{isEdit ? t("save") : t("create")}</Button></div></form></div></div>;
 }

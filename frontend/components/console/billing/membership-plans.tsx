@@ -641,7 +641,7 @@ export function MembershipPlans() {
                   {quoting ? (
                     <Loading size="sm" />
                   ) : quote ? (
-                    `${quote.pay_currency === "CNY" ? "¥" : "$"}${formatAmount(quote.pay_amount)}`
+                    `¥${formatAmount(quote.pay_amount)}`
                   ) : (
                     "—"
                   )}

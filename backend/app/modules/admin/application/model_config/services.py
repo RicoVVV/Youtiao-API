@@ -1,7 +1,7 @@
 """管理员模型、渠道和能力配置应用服务。"""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from typing import Any
 from uuid import UUID, uuid4
@@ -315,7 +315,10 @@ class AdminModelConfigApplicationService:
                 ),
                 max_length=128,
             ),
-            priority=(rule_crud.max_priority(model_id=source.model_id, token_group_id=source.token_group_id) or 0) + 1,
+            priority=_next_priority_in_scope(
+                rule_crud.list_in_scope(model_id=source.model_id, token_group_id=source.token_group_id),
+                conditional=bool(source.conditions),
+            ),
             conditions=deepcopy(source.conditions),
             currency=source.currency,
             active=source.active,
@@ -368,7 +371,10 @@ class AdminModelConfigApplicationService:
                 exists=lambda name: modifier_crud.exists_name(pricing_rule_id=source.pricing_rule_id, name=name),
                 max_length=128,
             ),
-            priority=(modifier_crud.max_priority(pricing_rule_id=source.pricing_rule_id) or 0) + 1,
+            priority=_next_priority_in_scope(
+                modifier_crud.list_for_rule(source.pricing_rule_id),
+                conditional=bool(source.conditions),
+            ),
             conditions=deepcopy(source.conditions),
             effect_type=source.effect_type,
             effect_payload=deepcopy(source.effect_payload),
@@ -954,7 +960,6 @@ def _seed_default_pricing_rules(
                 "model_id": model.id,
                 "token_group_id": group.id,
                 "name": rule["name"],
-                "priority": rule["priority"],
                 "conditions": deepcopy(rule.get("conditions", [])),
                 "items": items,
             }
@@ -970,7 +975,9 @@ def _seed_default_pricing_rules(
     PricingItemCrud(session).flush()
     for rule_id in created_rule_ids:
         for modifier in modifiers:
-            create_pricing_modifier(session, pricing_rule_id=rule_id, **deepcopy(modifier))
+            modifier_payload = deepcopy(modifier)
+            modifier_payload.pop("priority", None)
+            create_pricing_modifier(session, pricing_rule_id=rule_id, **modifier_payload)
 
 
 def _resolve_seed_groups(session: Session, group_ids: list[int] | None) -> list[TokenGroup]:
@@ -1041,6 +1048,20 @@ def _prune_channel_model_references(session: Session, channel: Channel, *, remov
     channel.model_mapping = {name: mapping for name, mapping in channel.model_mapping.items() if name in live_names}
 
 
+def _next_priority_in_scope(existing: Iterable[PricingRule | PricingModifier], *, conditional: bool) -> int:
+    """分配定价优先级：有条件规则插到无条件兜底规则之前，无条件规则或空范围追加到末尾。"""
+
+    entries = list(existing)
+    priorities = {entry.priority for entry in entries}
+    fallback_priorities = [entry.priority for entry in entries if not entry.conditions]
+    if conditional and fallback_priorities:
+        candidate = min(fallback_priorities) - 1
+        while candidate in priorities:
+            candidate -= 1
+        return candidate
+    return max(priorities, default=0) + 1
+
+
 def create_pricing_rule(session: Session, **payload: Any) -> dict[str, object]:
     model = _get_live_model(session, payload["model_id"])
     return _create_pricing_rule_for_model(session, model=model, payload=payload)
@@ -1048,6 +1069,12 @@ def create_pricing_rule(session: Session, **payload: Any) -> dict[str, object]:
 
 def _create_pricing_rule_for_model(session: Session, *, model: Model, payload: dict[str, Any]) -> dict[str, object]:
     item_payloads = payload.pop("items")
+    payload.pop("priority", None)
+    rule_crud = PricingRuleCrud(session)
+    payload["priority"] = _next_priority_in_scope(
+        rule_crud.list_in_scope(model_id=payload["model_id"], token_group_id=payload["token_group_id"]),
+        conditional=bool(payload.get("conditions")),
+    )
     rule = PricingRule(**payload)
     items = _build_pricing_items(rule.id, item_payloads)
     validate_configuration(
@@ -1062,11 +1089,6 @@ def _create_pricing_rule_for_model(session: Session, *, model: Model, payload: d
         derived_pricing_fields=_derived_pricing_fields(model),
         model_type=model.model_type,
     )
-    rule_crud = PricingRuleCrud(session)
-    if rule_crud.has_priority_conflict(
-        model_id=rule.model_id, token_group_id=rule.token_group_id, priority=rule.priority
-    ):
-        raise ValidationError("同一模型和令牌组内价格规则 priority 不能重复")
     rule_crud.add(rule)
     PricingItemCrud(session).add_many(items)
     return {"id": str(rule.id)}
@@ -1078,15 +1100,25 @@ def update_pricing_rule(session: Session, *, rule_id: UUID, **payload: Any) -> d
     if rule is None:
         raise NotFoundError("价格规则不存在")
     item_payloads = payload.pop("items")
+    payload.pop("priority", None)
+    model_id = payload.get("model_id", rule.model_id)
+    token_group_id = payload.get("token_group_id", rule.token_group_id)
+    # 优先级只由服务端在同模型同分组内顺延；跨模型或分组移动方案时重新取号，避免占用目标范围已有值。
+    priority = rule.priority
+    if (model_id, token_group_id) != (rule.model_id, rule.token_group_id):
+        priority = _next_priority_in_scope(
+            rule_crud.list_in_scope(model_id=model_id, token_group_id=token_group_id),
+            conditional=bool(payload.get("conditions", rule.conditions)),
+        )
     candidate = PricingRule(
         id=rule.id,
+        priority=priority,
         **{
             key: payload.get(key, getattr(rule, key))
             for key in (
                 "model_id",
                 "token_group_id",
                 "name",
-                "priority",
                 "conditions",
                 "currency",
                 "active",
@@ -1110,15 +1142,9 @@ def update_pricing_rule(session: Session, *, rule_id: UUID, **payload: Any) -> d
         derived_pricing_fields=_derived_pricing_fields(model),
         model_type=model.model_type,
     )
-    if rule_crud.has_priority_conflict(
-        model_id=candidate.model_id,
-        token_group_id=candidate.token_group_id,
-        priority=candidate.priority,
-        exclude_rule_id=rule.id,
-    ):
-        raise ValidationError("同一模型和令牌组内价格规则 priority 不能重复")
     for key, value in payload.items():
         setattr(rule, key, value)
+    rule.priority = priority
     item_crud.sync_for_rule(rule.id, candidate_items)
     return {"id": str(rule.id)}
 
@@ -1136,6 +1162,12 @@ def create_pricing_modifier(session: Session, **payload: Any) -> dict[str, objec
     rule = PricingRuleCrud(session).get(payload["pricing_rule_id"])
     if rule is None:
         raise NotFoundError("价格规则不存在")
+    payload.pop("priority", None)
+    modifier_crud = PricingModifierCrud(session)
+    payload["priority"] = _next_priority_in_scope(
+        modifier_crud.list_for_rule(payload["pricing_rule_id"]),
+        conditional=bool(payload.get("conditions")),
+    )
     modifier = PricingModifier(**payload)
     model = _get_live_model(session, rule.model_id)
     items = PricingItemCrud(session).list_for_rule(rule.id)
@@ -1151,9 +1183,6 @@ def create_pricing_modifier(session: Session, **payload: Any) -> dict[str, objec
         derived_pricing_fields=_derived_pricing_fields(model),
         model_type=model.model_type,
     )
-    modifier_crud = PricingModifierCrud(session)
-    if modifier_crud.has_priority_conflict(pricing_rule_id=modifier.pricing_rule_id, priority=modifier.priority):
-        raise ValidationError("同一价格规则内价格修正规则 priority 不能重复")
     modifier_crud.add(modifier)
     return {"id": str(modifier.id)}
 
@@ -1163,13 +1192,22 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
     modifier = modifier_crud.get_for_update(modifier_id)
     if modifier is None:
         raise NotFoundError("价格修正不存在")
+    payload.pop("priority", None)
+    pricing_rule_id = payload.get("pricing_rule_id", modifier.pricing_rule_id)
+    # 修正项归属方案变化时在目标方案内重新顺延优先级，避免与已有修正项冲突。
+    priority = modifier.priority
+    if pricing_rule_id != modifier.pricing_rule_id:
+        priority = _next_priority_in_scope(
+            modifier_crud.list_for_rule(pricing_rule_id),
+            conditional=bool(payload.get("conditions", modifier.conditions)),
+        )
     candidate = PricingModifier(
+        priority=priority,
         **{
             key: payload.get(key, getattr(modifier, key))
             for key in (
                 "pricing_rule_id",
                 "name",
-                "priority",
                 "conditions",
                 "effect_type",
                 "effect_payload",
@@ -1178,7 +1216,7 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
                 "scope_item_kinds",
                 "active",
             )
-        }
+        },
     )
     rule = PricingRuleCrud(session).get(candidate.pricing_rule_id)
     if rule is None:
@@ -1197,14 +1235,9 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
         derived_pricing_fields=_derived_pricing_fields(model),
         model_type=model.model_type,
     )
-    if modifier_crud.has_priority_conflict(
-        pricing_rule_id=candidate.pricing_rule_id,
-        priority=candidate.priority,
-        exclude_modifier_id=modifier.id,
-    ):
-        raise ValidationError("同一价格规则内价格修正规则 priority 不能重复")
     for key, value in payload.items():
         setattr(modifier, key, value)
+    modifier.priority = priority
     return {"id": str(modifier.id)}
 
 

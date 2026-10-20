@@ -216,7 +216,6 @@ export function ModelPricingDrawer({
                     <tr className="border-b border-border/60 bg-muted/40 text-center text-xs text-muted-foreground">
                       <th className="px-6 py-3 text-left font-medium">{t("colName")}</th>
                       <th className="px-6 py-3 font-medium">{t("colGroup")}</th>
-                      <th className="px-6 py-3 font-medium">{t("colPriority")}</th>
                       <th className="px-6 py-3 text-left font-medium">{t("colItems")}</th>
                       <th className="px-6 py-3 font-medium">{t("colStatus")}</th>
                       <th className="sticky right-0 z-20 bg-muted shadow-[-10px_0_12px_-10px_rgba(0,0,0,0.12)] px-6 py-3 font-medium">
@@ -235,9 +234,6 @@ export function ModelPricingDrawer({
                           <Badge variant="secondary">
                             {groupName(r.token_group_id)}
                           </Badge>
-                        </td>
-                        <td className="px-6 py-3 text-center font-mono text-xs">
-                          {r.priority}
                         </td>
                         <td className="px-6 py-3">
                           {r.items && r.items.length > 0 ? (

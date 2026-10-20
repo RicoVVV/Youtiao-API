@@ -22,7 +22,6 @@ class PricingRuleCreateRequest(BaseModel):
     model_id: UUID
     token_group_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=128)
-    priority: int
     conditions: list[dict[str, Any]] = Field(default_factory=list)
     items: list[PricingItemRequest] = Field(min_length=1)
     currency: str = Field(default="CNY", min_length=1, max_length=8)
