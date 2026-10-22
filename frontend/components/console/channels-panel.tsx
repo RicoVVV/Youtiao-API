@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Activity,
@@ -32,7 +32,17 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
 import { get, post } from "@/lib/request";
-import type { ModelOption } from "@/components/console/models-panel";
+import {
+  type ModelOption,
+  type ModelType,
+  type TemplatePricingRule,
+} from "@/components/console/models-panel";
+import { ProviderLogo } from "@/components/ui/provider-logo";
+import {
+  ChannelRuntimeSection,
+  ChannelTrendCard,
+  type ChannelRuntime,
+} from "@/components/console/channel-runtime";
 
 /** 渠道最新测试摘要：覆盖式快照，不含文本内容、图片 URL、Base64 等敏感数据 */
 type ChannelLatestTestSnapshot = {
@@ -65,11 +75,21 @@ type Channel = {
   created_at?: string;
   updated_at?: string;
   latest_test_snapshot?: ChannelLatestTestSnapshot | null;
+  /** 只读运行时状态；null 表示运行时状态不可用（Redis 异常或运行时调度已关闭） */
+  runtime?: ChannelRuntime | null;
 };
 
 type GroupOption = {
   id: number;
   name: string;
+};
+
+/** B2 可选 Provider：model_types 约束可选模型类型 */
+type ProviderOption = {
+  provider_id: string;
+  provider_name: string;
+  provider_logo_url?: string | null;
+  model_types?: ModelType[];
 };
 
 /** KV 条目编辑态：用于参数覆写与 Header 覆写 */
@@ -243,17 +263,636 @@ function InlineStepper({
   );
 }
 
+/** 手动定价单价格式：最多 6 位小数的非负数字符串 */
+const UNIT_AMOUNT_RE = /^\d+(\.\d{1,6})?$/;
+
+/** 批量预览返回的单模型匹配结果（与请求顺序一致） */
+type BatchPreviewItem = {
+  model_name: string;
+  matched: boolean;
+  requires_pricing_input: boolean;
+  match_type: "exact" | "provider_fallback" | "none";
+  template_id: string | null;
+  model_type: string | null;
+  provider_id: string | null;
+  provider_name: string | null;
+  provider_logo_url?: string | null;
+  /** 仅命中预设时非空，避免把模板兜底价误展示成真实价格 */
+  pricing_summary?: {
+    kind: string;
+    label: string;
+    unit_amount: string;
+    currency: string;
+  }[];
+  /** 未命中预设时作为价格编辑器初始值 */
+  pricing_rules?: TemplatePricingRule[];
+  /** 非 null 表示该行无法用当前端点创建 */
+  error?: string | null;
+};
+
+type BatchPreviewResponse = {
+  items: BatchPreviewItem[];
+  summary: {
+    total: number;
+    preset_matched: number;
+    requires_pricing_input: number;
+    failed: number;
+  };
+};
+
+/** 价格摘要格式化：币种 + 单价（去尾零）+ 计量单位（token 项按 1M） */
+function formatPricingSummary(item: {
+  kind: string;
+  label: string;
+  unit_amount: string;
+  currency: string;
+}): string {
+  const symbol = item.currency === "USD" ? "$" : `${item.currency} `;
+  const amount = item.unit_amount
+    .replace(/(\.\d*?)0+$/, "$1")
+    .replace(/\.$/, "");
+  const unit = item.kind.endsWith("_tokens") ? " / 1M" : "";
+  return `${item.label} ${symbol}${amount}${unit}`;
+}
+
+/** 深拷贝定价规则骨架，供行内手动编辑单价 */
+function clonePricingRules(rules: TemplatePricingRule[] | undefined) {
+  return (rules ?? []).map((rule) => ({
+    ...rule,
+    conditions: [...(rule.conditions ?? [])],
+    items: (rule.items ?? []).map((item) => ({
+      ...item,
+      source_fields: [...(item.source_fields ?? [])],
+    })),
+  }));
+}
+
+/**
+ * 渠道批量创建本地模型弹窗：
+ * 多选上游模型 → 选择端点（接口字段 provider_id）→ 批量预览价格 → 批量创建。
+ * 未命中预设的行按预览骨架行内填写单价；批量创建为整体事务，失败后保留已填内容。
+ */
+function UpstreamModelBatchCreateDialog({
+  names,
+  onClose,
+  onCreated,
+}: {
+  /** 待创建的上游模型名（父级已剔除本地已存在与已加入渠道的模型） */
+  names: string[];
+  onClose: () => void;
+  /** 创建成功回调：父级把新模型名同步进渠道服务模型并刷新模型选项 */
+  onCreated: (names: string[]) => void;
+}) {
+  const { t } = useTranslation("console");
+  const [providers, setProviders] = useState<ProviderOption[] | null>(null);
+  const [providersError, setProvidersError] = useState("");
+  const [providerId, setProviderId] = useState("");
+  /** 空字符串表示按模型名逐个推断 */
+  const [modelType, setModelType] = useState<ModelType | "">("");
+  const [preview, setPreview] = useState<BatchPreviewResponse | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  /** 行勾选：error 行不可选 */
+  const [rowSelected, setRowSelected] = useState<Record<string, boolean>>({});
+  /** 手动定价行的单价编辑态（按预览骨架深拷贝） */
+  const [rowRules, setRowRules] = useState<
+    Record<string, TemplatePricingRule[]>
+  >({});
+  const [rowExpanded, setRowExpanded] = useState<Record<string, boolean>>({});
+  const [submitting, setSubmitting] = useState(false);
+  /** 记录 mousedown 是否发生在遮罩上：避免从面板内拖选文本、在遮罩上松手时误关闭弹窗 */
+  const overlayMouseDown = useRef(false);
+
+  /** 拉取可选端点列表 */
+  useEffect(() => {
+    get<unknown>("/admin/models/providers/list")
+      .then((data) => setProviders(normalizeOptions<ProviderOption>(data)))
+      .catch((err) => {
+        setProviders(null);
+        setProvidersError(
+          err instanceof Error
+            ? err.message
+            : t("channels.batchCreate.endpointsLoadFailed")
+        );
+      });
+  }, [t]);
+
+  /** 预览请求序号：端点/类型快速切换时丢弃过期响应 */
+  const previewSeq = useRef(0);
+
+  /** 端点（及模型类型）确定后自动批量预览：error 行禁用勾选，需填写行初始化价格骨架 */
+  useEffect(() => {
+    if (!providerId) return;
+    const seq = ++previewSeq.current;
+    setPreviewLoading(true);
+    post<BatchPreviewResponse>("/admin/models/batch-match-preview", {
+      model_names: names,
+      provider_id: providerId,
+      ...(modelType ? { model_type: modelType } : {}),
+    })
+      .then((data) => {
+        if (seq !== previewSeq.current) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setPreview({
+          items,
+          summary: data?.summary ?? {
+            total: items.length,
+            preset_matched: 0,
+            requires_pricing_input: 0,
+            failed: 0,
+          },
+        });
+        const selected: Record<string, boolean> = {};
+        const rules: Record<string, TemplatePricingRule[]> = {};
+        for (const item of items) {
+          selected[item.model_name] = item.error == null;
+          if (item.requires_pricing_input) {
+            rules[item.model_name] = clonePricingRules(item.pricing_rules);
+          }
+        }
+        setRowSelected(selected);
+        setRowRules(rules);
+        setRowExpanded({});
+      })
+      .catch((err) => {
+        if (seq !== previewSeq.current) return;
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : t("channels.batchCreate.previewFailed")
+        );
+      })
+      .finally(() => {
+        if (seq === previewSeq.current) setPreviewLoading(false);
+      });
+  }, [providerId, modelType, names, t]);
+
+  const selectedProvider = providers?.find(
+    (p) => p.provider_id === providerId
+  );
+  const providerTypes = selectedProvider?.model_types ?? [];
+  const items = preview?.items ?? [];
+  const selectedRows = items.filter(
+    (it) => it.error == null && rowSelected[it.model_name]
+  );
+  const creatableCount = items.filter((it) => it.error == null).length;
+
+  const updateItemAmount = (
+    name: string,
+    ri: number,
+    ii: number,
+    value: string
+  ) =>
+    setRowRules((prev) => ({
+      ...prev,
+      [name]: (prev[name] ?? []).map((rule, r) =>
+        r !== ri
+          ? rule
+          : {
+              ...rule,
+              items: rule.items.map((item, i) =>
+                i !== ii ? item : { ...item, unit_amount: value }
+              ),
+            }
+      ),
+    }));
+
+  /** 批量创建：未命中预设的行必须填完整单价；整体事务，422 时保留表格已填内容 */
+  const onSubmit = async () => {
+    if (!providerId) {
+      toast.warning(t("channels.batchCreate.endpointRequired"));
+      return;
+    }
+    if (selectedRows.length === 0) {
+      toast.warning(t("channels.batchCreate.selectEmpty"));
+      return;
+    }
+    for (const row of selectedRows) {
+      if (!row.requires_pricing_input) continue;
+      const rules = rowRules[row.model_name] ?? [];
+      if (rules.length === 0) {
+        toast.warning(t("channels.batchCreate.pricingRequired"));
+        return;
+      }
+      for (const rule of rules) {
+        for (const item of rule.items) {
+          if (item.active === false) continue;
+          // input_video_duration 复用输出项价格，允许留空
+          if (item.kind === "input_video_duration") continue;
+          const amount = item.unit_amount?.trim() ?? "";
+          if (!amount || !UNIT_AMOUNT_RE.test(amount)) {
+            toast.warning(
+              t("channels.batchCreate.unitAmountInvalid", {
+                label: `${row.model_name} · ${item.label}`,
+              })
+            );
+            return;
+          }
+        }
+      }
+    }
+    setSubmitting(true);
+    try {
+      await post("/admin/models/batch-create", {
+        provider_id: providerId,
+        items: selectedRows.map((row) => ({
+          name: row.model_name,
+          ...(row.requires_pricing_input
+            ? {
+                pricing_rules: (rowRules[row.model_name] ?? []).map((rule) => ({
+                  ...rule,
+                  items: rule.items.map((item) => ({
+                    ...item,
+                    unit_amount: item.unit_amount?.trim()
+                      ? item.unit_amount.trim()
+                      : null,
+                  })),
+                })),
+              }
+            : {}),
+        })),
+      });
+      const createdNames = selectedRows.map((r) => r.model_name);
+      toast.success(
+        t("channels.batchCreate.success", { count: createdNames.length })
+      );
+      onCreated(createdNames);
+      onClose();
+    } catch (err) {
+      // 整批回滚：展示后端 422 文案（含失败模型名），保留已填内容供修正后重新提交
+      toast.error(
+        err instanceof Error ? err.message : t("channels.batchCreate.failed")
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-in fade-in-0 duration-200"
+      onMouseDown={(e) => {
+        overlayMouseDown.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (overlayMouseDown.current && e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-border/80 bg-background shadow-2xl animate-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold">
+              {t("channels.batchCreate.title")}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t("channels.batchCreate.desc", { count: names.length })}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("channels.close")}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="min-h-80 flex-1 space-y-4 overflow-y-auto p-5">
+          {/* 端点与模型类型选择 */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-56 flex-1 space-y-1.5">
+              <span className="text-sm font-medium">
+                {t("channels.batchCreate.endpointLabel")}
+              </span>
+              {providersError ? (
+                <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {providersError}
+                </p>
+              ) : (
+                <Select
+                  value={providerId}
+                  onValueChange={(v) => {
+                    setProviderId(v);
+                    setModelType("");
+                    setPreview(null);
+                  }}
+                  options={(providers ?? []).map((p) => ({
+                    value: p.provider_id,
+                    label: (
+                      <span className="inline-flex items-center gap-1.5">
+                        <ProviderLogo
+                          src={p.provider_logo_url}
+                          providerId={p.provider_id}
+                          className="size-3.5"
+                        />
+                        {p.provider_name}
+                      </span>
+                    ),
+                  }))}
+                  placeholder={t("channels.batchCreate.endpointPlaceholder")}
+                  aria-label={t("channels.batchCreate.endpointLabel")}
+                />
+              )}
+            </div>
+            {providerTypes.length > 0 && (
+              <div className="min-w-40 space-y-1.5">
+                <span className="text-sm font-medium">
+                  {t("channels.batchCreate.modelTypeLabel")}
+                </span>
+                <Select
+                  value={modelType}
+                  onValueChange={(v) => {
+                    setModelType(v as ModelType | "");
+                    setPreview(null);
+                  }}
+                  options={[
+                    {
+                      value: "",
+                      label: t("channels.batchCreate.modelTypeAuto"),
+                    },
+                    ...providerTypes.map((mt) => ({
+                      value: mt,
+                      label: t(`models.type.${mt}`),
+                    })),
+                  ]}
+                  aria-label={t("channels.batchCreate.modelTypeLabel")}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 预览加载中 */}
+          {previewLoading && (
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+              <Loading size="sm" />
+              {t("channels.batchCreate.previewLoading")}
+            </div>
+          )}
+
+          {/* 汇总：已匹配 / 需填写 / 失败 */}
+          {preview && (
+            <p className="text-xs text-muted-foreground">
+              {t("channels.batchCreate.summary", {
+                matched: preview.summary.preset_matched,
+                needInput: preview.summary.requires_pricing_input,
+                failed: preview.summary.failed,
+              })}
+            </p>
+          )}
+
+          {/* 批量配置表格 */}
+          {preview && (
+            <div className="overflow-x-auto rounded-lg border border-border/60">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
+                    <th className="w-10 px-3 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        aria-label={t("channels.batchCreate.selectAll")}
+                        checked={
+                          creatableCount > 0 &&
+                          selectedRows.length === creatableCount
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setRowSelected((prev) => {
+                            const next = { ...prev };
+                            for (const it of items) {
+                              if (it.error == null) next[it.model_name] = checked;
+                            }
+                            return next;
+                          });
+                        }}
+                        className="size-3.5 cursor-pointer accent-primary"
+                      />
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      {t("channels.batchCreate.colName")}
+                    </th>
+                    <th className="w-28 px-3 py-2 text-left font-medium">
+                      {t("channels.batchCreate.colEndpoint")}
+                    </th>
+                    <th className="w-20 px-3 py-2 text-left font-medium">
+                      {t("channels.batchCreate.colType")}
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      {t("channels.batchCreate.colPrice")}
+                    </th>
+                    <th className="w-28 px-3 py-2 text-left font-medium">
+                      {t("channels.batchCreate.colStatus")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => {
+                    const failed = it.error != null;
+                    const manual = it.requires_pricing_input && !failed;
+                    const expanded = rowExpanded[it.model_name] ?? false;
+                    return (
+                      <Fragment key={it.model_name}>
+                        <tr
+                          className={cn(
+                            "border-b border-border/40 last:border-b-0",
+                            failed && "opacity-60"
+                          )}
+                        >
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              aria-label={it.model_name}
+                              disabled={failed}
+                              checked={rowSelected[it.model_name] ?? false}
+                              onChange={(e) =>
+                                setRowSelected((prev) => ({
+                                  ...prev,
+                                  [it.model_name]: e.target.checked,
+                                }))
+                              }
+                              className="size-3.5 cursor-pointer accent-primary disabled:cursor-not-allowed"
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {it.model_name}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {it.provider_name ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <ProviderLogo
+                                  src={it.provider_logo_url}
+                                  providerId={it.provider_id}
+                                  className="size-3.5"
+                                />
+                                {it.provider_name}
+                              </span>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {it.model_type
+                              ? t(`models.type.${it.model_type}`)
+                              : "-"}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {failed ? (
+                              <span className="text-destructive">
+                                {it.error}
+                              </span>
+                            ) : it.matched ? (
+                                              <span className="font-mono">
+                                                {(it.pricing_summary ?? [])
+                                                  .map(formatPricingSummary)
+                                                  .join("；") || "-"}
+                                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRowExpanded((prev) => ({
+                                    ...prev,
+                                    [it.model_name]: !expanded,
+                                  }))
+                                }
+                                className="cursor-pointer text-amber-600 underline decoration-dotted underline-offset-2 hover:text-amber-500 dark:text-amber-400"
+                              >
+                                {t("channels.batchCreate.needInput")}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {failed ? (
+                              <Badge variant="destructive" className="text-xs">
+                                {t("channels.batchCreate.statusFailed")}
+                              </Badge>
+                            ) : it.matched ? (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-600 dark:text-emerald-400"
+                              >
+                                {t("channels.batchCreate.statusMatched")}
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-500/30 bg-amber-500/10 text-xs text-amber-600 dark:text-amber-400"
+                              >
+                                {t("channels.batchCreate.statusNeedInput")}
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                        {/* 行内价格编辑器：初始值来自预览返回的 pricing_rules 骨架 */}
+                        {manual && expanded && (
+                          <tr className="border-b border-border/40 last:border-b-0">
+                            <td colSpan={6} className="bg-amber-500/5 px-6 py-3">
+                              <div className="space-y-3">
+                                <p className="text-xs text-amber-600 dark:text-amber-400">
+                                  {t("channels.batchCreate.manualPricingHint")}
+                                </p>
+                                {(rowRules[it.model_name] ?? []).map(
+                                  (rule, ri) => (
+                                    <div key={ri} className="space-y-1.5">
+                                      <p className="text-xs font-medium">
+                                        {rule.name}（{rule.currency ?? "USD"}）
+                                      </p>
+                                      {rule.items.map((item, ii) => (
+                                        <div
+                                          key={ii}
+                                          className="flex items-center gap-2"
+                                        >
+                                          <span
+                                            className="w-32 shrink-0 truncate text-xs text-muted-foreground"
+                                            title={item.label}
+                                          >
+                                            {item.label}
+                                          </span>
+                                          <Input
+                                            value={item.unit_amount ?? ""}
+                                            onChange={(e) =>
+                                              updateItemAmount(
+                                                it.model_name,
+                                                ri,
+                                                ii,
+                                                e.target.value
+                                              )
+                                            }
+                                            placeholder={
+                                              item.kind ===
+                                              "input_video_duration"
+                                                ? t(
+                                                    "channels.batchCreate.reuseOutputPrice"
+                                                  )
+                                                : "0.000000"
+                                            }
+                                            inputMode="decimal"
+                                            autoComplete="off"
+                                            aria-label={t(
+                                              "channels.batchCreate.unitAmountAria",
+                                              { label: item.label }
+                                            )}
+                                            className="h-8 flex-1 font-mono text-xs"
+                                          />
+                                          <span className="w-20 shrink-0 text-right text-xs text-muted-foreground">
+                                            {item.kind.endsWith("_tokens")
+                                              ? "/ 1M Token"
+                                              : ""}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border/60 px-5 py-3.5">
+          <Button type="button" variant="outline" onClick={onClose}>
+            {t("channels.cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={onSubmit}
+            disabled={submitting || selectedRows.length === 0}
+          >
+            {submitting && <Loading size="sm" />}
+            {t("channels.batchCreate.submit", {
+              count: selectedRows.length,
+            })}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 新建 / 编辑渠道抽屉（channel 为 null 时新建） */
 function ChannelFormDialog({
   channel,
   modelOptions,
   groupOptions,
+  refreshModelOptions,
   onClose,
   onSaved,
 }: {
   channel: Channel | null;
   modelOptions: ModelOption[];
   groupOptions: GroupOption[];
+  /** 从上游模型创建本地模型成功后刷新模型选项（MultiSelect 不展示选项外值） */
+  refreshModelOptions: () => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -265,6 +904,15 @@ function ChannelFormDialog({
   const [submitting, setSubmitting] = useState(false);
   const [activeSection, setActiveSection] =
     useState<(typeof FORM_SECTIONS)[number]["id"]>("basic");
+  /** B1 拉取到的上游模型列表；null 表示尚未拉取 */
+  const [upstreamModels, setUpstreamModels] = useState<string[] | null>(null);
+  const [fetchingUpstream, setFetchingUpstream] = useState(false);
+  /** 上游模型多选集合：等待批量创建 */
+  const [upstreamSelected, setUpstreamSelected] = useState<string[]>([]);
+  /** 批量创建本地模型弹窗：非 null 时打开，值为待创建的模型名列表 */
+  const [batchCreateNames, setBatchCreateNames] = useState<string[] | null>(
+    null
+  );
   /** 记录 mousedown 是否发生在遮罩上：避免从面板内拖选文本、在遮罩上松手时误关闭抽屉 */
   const overlayMouseDown = useRef(false);
 
@@ -280,6 +928,89 @@ function ChannelFormDialog({
       }
       return { ...prev, supportedModels: models, modelMapping };
     });
+  };
+
+  /** B1 拉取上游模型：编辑态带 channel_id 由后端回填密钥，新建态用表单 URL/Key */
+  const fetchUpstreamModels = async () => {
+    const baseUrl = form.baseUrl.trim();
+    const apiKey = form.apiKey.trim();
+    if (!isEdit) {
+      if (!/^https?:\/\//.test(baseUrl)) {
+        toast.warning(t("channels.baseUrlInvalid"));
+        return;
+      }
+      if (!apiKey) {
+        toast.warning(t("channels.apiKeyRequired"));
+        return;
+      }
+    }
+    const headerOverride = buildKvObject(
+      form.headerOverride,
+      t("channels.kvHeaderOverride")
+    );
+    if (headerOverride === null) return;
+    setFetchingUpstream(true);
+    try {
+      const data = await post<{ models?: string[] }>(
+        "/admin/channels/fetch-upstream-models",
+        {
+          ...(isEdit ? { channel_id: channel.id } : {}),
+          ...(baseUrl ? { base_url: baseUrl } : {}),
+          ...(apiKey ? { api_key: apiKey } : {}),
+          ...(Object.keys(headerOverride).length > 0
+            ? { header_override: headerOverride }
+            : {}),
+        }
+      );
+      const models = Array.isArray(data?.models) ? data.models : [];
+      setUpstreamModels(models);
+      setUpstreamSelected([]);
+      if (models.length === 0) toast.warning(t("channels.upstreamEmpty"));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t("channels.upstreamFetchFailed")
+      );
+    } finally {
+      setFetchingUpstream(false);
+    }
+  };
+
+  /** 勾选/取消勾选上游模型：已在服务模型中的不可操作 */
+  const toggleUpstreamSelect = (name: string) => {
+    if (form.supportedModels.includes(name)) return;
+    setUpstreamSelected((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  };
+
+  /** 批量配置入口：本地已存在的直接勾选进服务模型，其余进入批量创建弹窗 */
+  const onBatchConfigure = () => {
+    const existing = upstreamSelected.filter((name) =>
+      modelOptions.some((m) => m.name === name)
+    );
+    const missing = upstreamSelected.filter(
+      (name) => !modelOptions.some((m) => m.name === name)
+    );
+    if (existing.length > 0) {
+      onModelsChange([...form.supportedModels, ...existing]);
+      setUpstreamSelected((prev) =>
+        prev.filter((name) => !existing.includes(name))
+      );
+      toast.success(
+        t("channels.upstreamAdded", { name: existing.join("、") })
+      );
+    }
+    if (missing.length > 0) setBatchCreateNames(missing);
+  };
+
+  /** 批量创建成功：全部勾选进服务模型并刷新父级模型选项 */
+  const onUpstreamBatchCreated = (names: string[]) => {
+    const toAdd = names.filter((n) => !form.supportedModels.includes(n));
+    if (toAdd.length > 0) {
+      onModelsChange([...form.supportedModels, ...toAdd]);
+    }
+    setUpstreamSelected((prev) => prev.filter((n) => !names.includes(n)));
+    refreshModelOptions();
   };
 
   /** KV 行 → 对象，校验重复键与空键 */
@@ -633,11 +1364,100 @@ function ChannelFormDialog({
                       emptyText={t("channels.modelsEmpty")}
                       searchable
                       searchPlaceholder={t("channels.modelsSearchPlaceholder")}
-                      noResultText={t("channels.modelsSearchEmpty")}
+                      searchEmptyText={t("channels.modelsSearchEmpty")}
                     />
                     <p className="text-xs text-muted-foreground">
                       {t("channels.modelsHint")}
                     </p>
+                  </div>
+                  {/* B1 拉取上游模型：点击模型名勾选（本地不存在时先创建本地模型） */}
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={fetchUpstreamModels}
+                      disabled={fetchingUpstream}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "size-3.5",
+                          fetchingUpstream && "animate-spin"
+                        )}
+                      />
+                      {t("channels.upstreamFetch")}
+                    </Button>
+                    {upstreamModels !== null && (
+                      <div className="space-y-2 rounded-lg border border-border/60 bg-muted/10 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          {upstreamModels.length > 0
+                            ? t("channels.upstreamFetched", {
+                                count: upstreamModels.length,
+                              })
+                            : t("channels.upstreamEmpty")}
+                        </p>
+                        {upstreamModels.length > 0 && (
+                          <>
+                            <div className="flex flex-wrap gap-1.5">
+                              {upstreamModels.map((name) => {
+                                const added = form.supportedModels.includes(name);
+                                const selected = upstreamSelected.includes(name);
+                                return (
+                                  <button
+                                    key={name}
+                                    type="button"
+                                    disabled={added}
+                                    onClick={() => toggleUpstreamSelect(name)}
+                                    title={
+                                      added
+                                        ? t("channels.upstreamAddedTitle")
+                                        : t("channels.upstreamSelectTitle", { name })
+                                    }
+                                    className={cn(
+                                      "inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-xs transition-colors",
+                                      added
+                                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                        : selected
+                                          ? "border-primary/50 bg-primary/10 text-primary"
+                                          : "border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                                    )}
+                                  >
+                                    {added || selected ? (
+                                      <CheckCircle2 className="size-3" />
+                                    ) : (
+                                      <Plus className="size-3" />
+                                    )}
+                                    {name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={onBatchConfigure}
+                                disabled={upstreamSelected.length === 0}
+                              >
+                                <Layers className="size-3.5" />
+                                {t("channels.batchConfigure", {
+                                  count: upstreamSelected.length,
+                                })}
+                              </Button>
+                              {upstreamSelected.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setUpstreamSelected([])}
+                                  className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                >
+                                  {t("channels.upstreamClearSelection")}
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <span className="text-sm font-medium">{t("channels.groupsLabel")}</span>
@@ -782,6 +1602,15 @@ function ChannelFormDialog({
                 </Button>
               </div>
             </form>
+
+            {/* 从上游模型批量创建本地模型：批量预览价格 → 批量创建 */}
+            {batchCreateNames !== null && (
+              <UpstreamModelBatchCreateDialog
+                names={batchCreateNames}
+                onClose={() => setBatchCreateNames(null)}
+                onCreated={onUpstreamBatchCreated}
+              />
+            )}
           </>
       </div>
     </div>
@@ -836,7 +1665,7 @@ function ChannelDetailDialog({
       onClick={onClose}
     >
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border bg-background p-6 shadow-xl"
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border bg-background p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-base font-semibold">{t("channels.detailTitle")}</h2>
@@ -918,6 +1747,13 @@ function ChannelDetailDialog({
               </dd>
             </div>
           </dl>
+        )}
+        {/* 只读运行时状态与运行趋势（不改变创建/更新接口） */}
+        {!loading && !error && detail && (
+          <div className="mt-6 space-y-5 border-t border-border/60 pt-5">
+            <ChannelRuntimeSection runtime={detail.runtime} />
+            <ChannelTrendCard channelId={detail.id} />
+          </div>
         )}
         <div className="mt-6 flex justify-end">
           <Button variant="outline" onClick={onClose}>
@@ -1379,19 +2215,24 @@ export function ChannelsPanel() {
 
   const hasFilterInput = Boolean(channelNameInput || modelNameInput || groupNameInput);
 
-  // 拉取表单选项：模型、令牌分组
-  useEffect(() => {
+  /** 拉取模型选项：新建本地模型后可重新拉取（MultiSelect 不展示选项外值） */
+  const loadModelOptions = useCallback(() => {
     get<unknown>("/admin/models/list", {
       params: { page: 1, page_size: 100 },
     })
       .then((data) => setModelOptions(normalizeOptions<ModelOption>(data)))
       .catch(() => {});
+  }, []);
+
+  // 拉取表单选项：模型、令牌分组
+  useEffect(() => {
+    loadModelOptions();
     get<unknown>("/admin/token/groups/list", {
       params: { page: 1, page_size: 100 },
     })
       .then((data) => setGroupOptions(normalizeOptions<GroupOption>(data)))
       .catch(() => {});
-  }, []);
+  }, [loadModelOptions]);
 
   /** 启用/停用：乐观更新，失败回滚（健康状态由健康检查驱动，不在此切换） */
   const toggleActive = async (channel: Channel, value: boolean) => {
@@ -1953,6 +2794,7 @@ export function ChannelsPanel() {
           channel={null}
           modelOptions={modelOptions}
           groupOptions={groupOptions}
+          refreshModelOptions={loadModelOptions}
           onClose={() => setDialogOpen(false)}
           onSaved={() => load(page, appliedChannelName, appliedModelName, appliedGroupName)}
         />
@@ -1962,6 +2804,7 @@ export function ChannelsPanel() {
           channel={editingChannel}
           modelOptions={modelOptions}
           groupOptions={groupOptions}
+          refreshModelOptions={loadModelOptions}
           onClose={() => setEditingChannel(null)}
           onSaved={() => load(page, appliedChannelName, appliedModelName, appliedGroupName)}
         />

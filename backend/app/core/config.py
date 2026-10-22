@@ -53,6 +53,48 @@ class Settings(BaseSettings):
     http_max_connections: int = Field(default=32, ge=1)
     http_max_keepalive_connections: int = Field(default=16, ge=0)
     provider_read_timeout_seconds: int = Field(default=1800, ge=1)
+    routing_runtime_enabled: bool = True
+    """渠道运行时调度总开关；关闭后回退为静态权重加权随机且不熔断。"""
+    routing_min_weight: float = Field(default=1.0, gt=0)
+    """AIMD 有效权重下限。"""
+    routing_aimd_success_increment_ratio: float = Field(default=0.01, gt=0, le=1)
+    """成功增量相对初始权重的比例。"""
+    routing_aimd_decay_at_min: float = Field(default=0.9, gt=0, le=1)
+    """权重处于下限时的失败乘数。"""
+    routing_aimd_decay_at_high: float = Field(default=0.5, gt=0, le=1)
+    """权重达到高权重参考值时的失败乘数。"""
+    routing_aimd_high_weight_multiplier: float = Field(default=8.0, gt=1)
+    """高权重参考值 = 初始权重 × 该倍数。"""
+    routing_ewma_half_life_samples: int = Field(default=50, ge=1)
+    """成功率与耗时的 EWMA 半衰期样本数。"""
+    routing_latency_baseline_ms: int = Field(default=1000, ge=1)
+    """耗时基准毫秒，用于把耗时折算为增减权重。"""
+    routing_circuit_failure_threshold: int = Field(default=3, ge=1)
+    """连续上游失败达到该次数后熔断。"""
+    routing_circuit_cooldown_seconds: int = Field(default=15, ge=1)
+    """熔断冷却秒数，到期后进入半开。"""
+    routing_circuit_probe_lease_seconds: int = Field(default=30, ge=1)
+    """半开状态单个业务请求的探测租约秒数。"""
+    routing_probe_interval_seconds: int = Field(default=60, ge=5)
+    """启用渠道的短请求探测间隔秒数。"""
+    routing_probe_timeout_seconds: int = Field(default=5, ge=1)
+    """短请求探测单次超时秒数。"""
+    routing_probe_failure_threshold: int = Field(default=3, ge=1)
+    """探测连续失败达到该轮数后自动停用渠道。"""
+    routing_probe_recovery_threshold: int = Field(default=3, ge=1)
+    """自动停用渠道连续探测成功达到该次数后自动启用。"""
+    routing_probe_disabled_interval_seconds: int = Field(default=300, ge=5)
+    """已自动停用渠道的探测间隔秒数。"""
+    routing_probe_concurrency: int = Field(default=10, ge=1, le=100)
+    """单轮探测的最大并发数。"""
+    routing_state_ttl_seconds: int = Field(default=604800, ge=60)
+    """Redis 运行时状态过期秒数，过期后回到初始权重。"""
+    routing_sample_interval_seconds: int = Field(default=60, ge=5)
+    """趋势采样间隔秒数。"""
+    routing_sample_retention_days: int = Field(default=7, ge=1, le=90)
+    """趋势采样保留天数。"""
+    routing_trend_max_hours: int = Field(default=168, ge=1, le=720)
+    """趋势查询允许的最大时长小时数。"""
     video_task_timeout_seconds: int = Field(default=86400, ge=1)
     """视频任务从成功提交至上游起的业务超时秒数。"""
 

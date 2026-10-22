@@ -82,8 +82,8 @@ class WalletApplicationService:
             )
         )
 
-    def reserve_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> None:
-        """原子扣减余额并写入关联使用记录的扣费明细。"""
+    def reserve_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> Wallet:
+        """原子扣减余额并写入关联使用记录的扣费明细，返回扣减后的钱包。"""
         if amount <= 0:
             raise ValidationError("扣费金额必须为正数")
         wallet = self._crud.debit_if_sufficient(user_id, amount)
@@ -100,6 +100,7 @@ class WalletApplicationService:
                 usage_record_id=usage_record_id,
             )
         )
+        return wallet
 
     def refund_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> None:
         """向使用记录关联的钱包预扣金额退款并写入余额明细。"""
@@ -111,8 +112,8 @@ class WalletApplicationService:
             usage_record_id=usage_record_id,
         )
 
-    def charge_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> None:
-        """按实际用量后付费扣减余额并写入明细，允许余额为负表示待补缴欠费。"""
+    def charge_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> Wallet:
+        """按实际用量后付费扣减余额并写入明细，允许余额为负表示待补缴欠费，返回扣减后的钱包。"""
         if amount <= 0:
             raise ValidationError("扣费金额必须为正数")
         wallet = self._crud.debit_unconditional(user_id, amount)
@@ -129,6 +130,7 @@ class WalletApplicationService:
                 usage_record_id=usage_record_id,
             )
         )
+        return wallet
 
     def list_balance_records(self, user_id: UUID) -> list[BalanceRecord]:
         """读取用户自己的余额明细。"""

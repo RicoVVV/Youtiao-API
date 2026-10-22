@@ -254,6 +254,7 @@ def _error_message(payload: dict[str, Any], fallback: str) -> str:
     candidates = (
         error.get("message") if isinstance(error, dict) else None,
         payload.get("message"),
+        payload.get("detail"),
         payload.get("body"),
     )
     for candidate in candidates:

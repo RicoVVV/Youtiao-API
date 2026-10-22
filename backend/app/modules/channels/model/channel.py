@@ -35,3 +35,7 @@ class Channel(SQLModelBase, table=True):
     weight: int = Field(default=1, sa_column=Column(Integer, nullable=False))
     active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, index=True))
     healthy: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, index=True))
+    auto_disabled_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, comment="健康探测自动停用时间，为空表示非自动停用"),
+    )

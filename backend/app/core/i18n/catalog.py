@@ -370,6 +370,8 @@ MESSAGES_EN: dict[str, str] = {
     "渠道已停用，无法测试": "The channel is disabled and cannot be tested",
     "渠道未配置可测试模型": "The channel has no testable model configured",
     "渠道权重必须为正整数": "Channel weight must be a positive integer",
+    "权重与当前权重数量不一致": "Weight and current weight counts must match",
+    "没有可参与轮询的候选": "No candidate is available for weighted round-robin",
     "渠道模型列表不合法": "Invalid channel model list",
     "渠道模型列表不能重复": "The channel model list cannot contain duplicates",
     "渠道模型映射包含未启用模型": "The channel model mapping contains a disabled model",
@@ -667,6 +669,30 @@ MESSAGES_EN: dict[str, str] = {
     "用户当前没有有效会员": "The user has no active membership",
     "该等级仍有有效会员，不能删除": "This level still has active members and cannot be deleted",
     "该功能模块已被管理员关闭": "This feature has been disabled by the administrator",
+    # 渠道上游模型拉取与余额预警
+    "上游未返回任何可用模型": "The upstream returned no available models",
+    "上游模型列表返回的不是合法 JSON": "The upstream model list is not valid JSON",
+    "上游鉴权失败，请检查渠道 API Key": "Upstream authentication failed; check the channel API key",
+    "无法连接上游模型列表接口": "Unable to connect to the upstream model list endpoint",
+    "请填写渠道 URL": "Provide the channel URL",
+    "请填写渠道 API Key": "Provide the channel API key",
+    "所选 Provider 不支持该模型类型": "The selected Provider does not support this model type",
+    "所选模板不属于该模型 Provider": "The selected template does not belong to the model's Provider",
+    "模型 Provider 不存在": "Model Provider not found",
+    "模型名不能为空": "Model name cannot be empty",
+    "批量创建的模型名不能重复": "Model names in a batch create request must be unique",
+    "定价规则不合法": "Invalid pricing rule",
+    "请填写完整的计费项单价": "Provide a complete unit amount for every pricing item",
+    "该模型未匹配到所选 Provider 的预设价格，请手动填写定价规则": (
+        "No preset price was found for this model under the selected Provider; fill in the pricing rules manually"
+    ),
+    "余额预警依赖邮箱注册验证，开启余额预警时必须同时开启邮箱注册验证": (
+        "Balance alerts depend on email verification; enable email verification before enabling balance alerts"
+    ),
+    "余额预警阈值必须大于 0": "The balance alert threshold must be greater than 0",
+    "当前账号未绑定邮箱，请填写接收余额预警的邮箱": (
+        "The current account has no email bound; provide an email to receive balance alerts"
+    ),
     # 其他校验文案
     "分组价格倍率不合法": "Invalid group price multiplier",
     "开始时间不能晚于结束时间": "The start time cannot be later than the end time",
@@ -695,6 +721,8 @@ CODE_MESSAGES: dict[str, str] = {
     "contract.model_reference_deleted": (
         "The model referenced by the channel does not exist or has been deleted: {name}"
     ),
+    # 渠道运行时与趋势
+    "channel.trend_hours_exceeded": "The trend range cannot exceed {hours} hours",
     # 计费方案与报价
     "pricing_plan.duplicate_position": "Duplicate {label} position",
     "pricing_plan.material_field_unsupported_kind": (

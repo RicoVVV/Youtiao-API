@@ -79,3 +79,10 @@ class UserCrud:
 
     def acquire_initial_admin_lock(self) -> None:
         self._session.execute(select(func.pg_advisory_xact_lock(817263541)))
+
+    def set_balance_alert_settings(self, user: User, *, threshold: Decimal | None, email: str | None) -> None:
+        """写入用户自设的余额预警阈值与收件邮箱，不提交事务。"""
+
+        user.balance_alert_threshold = threshold
+        user.balance_alert_email = email
+        self._session.add(user)

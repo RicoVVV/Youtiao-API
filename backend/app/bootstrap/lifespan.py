@@ -10,7 +10,9 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.database import dispose_async_database, dispose_database, get_session_factory
 from app.infrastructure.http.client import close_async_http_client
+from app.modules.channels.runtime.probe_task import ChannelHealthProbeSystemTaskRunner
 from app.modules.channels.runtime.routing_snapshot import RoutingSnapshotInvalidationSubscriber
+from app.modules.channels.runtime.sample_task import ChannelRuntimeSampleSystemTaskRunner
 from app.modules.monitoring.application.runtime import GroupMonitorSystemTaskRunner, ServerMetricSystemTaskRunner
 from app.modules.payment.application.admin.settings import PaymentSettingsRuntimeManager
 from app.modules.system_tasks.runtime import SystemTaskRuntime
@@ -63,6 +65,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             UsageStatisticsSystemTaskRunner(),
             GroupMonitorSystemTaskRunner(),
             ServerMetricSystemTaskRunner(),
+            ChannelHealthProbeSystemTaskRunner(),
+            ChannelRuntimeSampleSystemTaskRunner(),
         ]
     )
     await runtime.start()

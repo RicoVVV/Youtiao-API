@@ -7,9 +7,14 @@ from sqlmodel import Session
 from app.core.auth import get_admin_user_id
 from app.core.database import get_db
 from app.modules.admin.api.models.schemas import (
+    ModelBatchCreateRequest,
+    ModelBatchCreateResponse,
+    ModelBatchPreviewRequest,
+    ModelBatchPreviewResponse,
     ModelCopyRequest,
     ModelCreateRequest,
     ModelDeleteRequest,
+    ModelProviderListResponse,
     ModelStatusUpdateRequest,
     ModelUpdateRequest,
 )
@@ -73,5 +78,42 @@ def get_model(model_id: Annotated[UUID, Query()], session: Annotated[Session, De
 def match_model_preview(
     session: Annotated[Session, Depends(get_db)],
     name: Annotated[str, Query(min_length=1, max_length=64)],
+    provider_id: Annotated[str | None, Query(max_length=64)] = None,
+    model_type: Annotated[str | None, Query(max_length=32)] = None,
 ) -> dict[str, object]:
-    return AdminModelConfigApplicationService(session).match_model_preview(name=name)
+    return AdminModelConfigApplicationService(session).match_model_preview(
+        name=name, provider_id=provider_id, model_type=model_type
+    )
+
+
+@router.get(
+    "/providers/list",
+    response_model=ModelProviderListResponse,
+    dependencies=[Depends(get_admin_user_id)],
+    summary="查询可选模型 Provider 列表",
+)
+def list_model_providers(session: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
+    return AdminModelConfigApplicationService(session).list_model_providers()
+
+
+@router.post(
+    "/batch-match-preview",
+    response_model=ModelBatchPreviewResponse,
+    dependencies=[Depends(get_admin_user_id)],
+    summary="批量预览模型名自动匹配结果",
+)
+def batch_match_model_preview(
+    payload: ModelBatchPreviewRequest, session: Annotated[Session, Depends(get_db)]
+) -> dict[str, object]:
+    return AdminModelConfigApplicationService(session).batch_match_model_preview(**payload.model_dump())
+
+
+@router.post(
+    "/batch-create",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ModelBatchCreateResponse,
+    dependencies=[Depends(get_admin_user_id)],
+    summary="批量创建模型",
+)
+def batch_create_models(payload: ModelBatchCreateRequest, session: Annotated[Session, Depends(get_db)]) -> dict:
+    return AdminModelConfigApplicationService(session).batch_create_models(payload.model_dump())

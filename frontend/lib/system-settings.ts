@@ -51,6 +51,8 @@ export type AdminSystemSettings = SystemSettings & {
   smtp_from_email: string;
   /** 发件人名称；为空时发信使用系统名称 */
   smtp_from_name: string;
+  /** 余额预警总开关；开启后用户可自行设置阈值 */
+  balance_alert_enabled: boolean;
 };
 
 /** 站点品牌字段全量更新请求体：除 logo_url 外均不可为 null */
@@ -81,6 +83,12 @@ export type EmailVerificationUpdatePayload = {
   smtp_from_name: string;
 };
 
+/** 余额预警更新请求体（差异提交，仅传变更字段）；阈值由用户自行设置，管理员只维护总开关 */
+export type BalanceAlertUpdatePayload = {
+  /** 开启时要求 email_verification_enabled 保持开启且 SMTP 配置完整 */
+  balance_alert_enabled: boolean;
+};
+
 /** 公开读取系统设置（无需登录） */
 export function getPublicSystemSettings() {
   return get<SystemSettings>("/system-settings/detail");
@@ -93,7 +101,9 @@ export function getAdminSystemSettings() {
 
 /** 管理员更新系统设置（差异提交，仅传变更字段），返回后端规范化后的完整对象 */
 export function updateAdminSystemSettings(
-  payload: Partial<SystemSettingsUpdatePayload & EmailVerificationUpdatePayload>
+  payload: Partial<
+    SystemSettingsUpdatePayload & EmailVerificationUpdatePayload & BalanceAlertUpdatePayload
+  >
 ) {
   return post<AdminSystemSettings>("/admin/system-settings/update", payload);
 }

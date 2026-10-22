@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -10,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.bootstrap.container import get_model_catalog, get_provider_template_registry
+from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError, error_context
 from app.core.i18n import get_locale
 from app.modules.admin.crud.channel_crud import ChannelCrud
@@ -19,9 +21,13 @@ from app.modules.admin.crud.pricing_item_crud import PricingItemCrud
 from app.modules.admin.crud.pricing_modifier_crud import PricingModifierCrud
 from app.modules.admin.crud.pricing_rule_crud import PricingRuleCrud
 from app.modules.channels.application.validation import validate_configuration
+from app.modules.channels.crud.channels import ChannelCrud as ConfigurationChannelCrud
+from app.modules.channels.crud.samples import ChannelRuntimeSampleCrud
 from app.modules.channels.model.channel import Channel
+from app.modules.channels.runtime.channel_runtime import get_channel_runtime
 from app.modules.channels.runtime.routing_snapshot import publish_routing_snapshot_invalidation
 from app.modules.model_catalog.entries import ModelPricingEntry
+from app.modules.model_catalog.matching import infer_model_type
 from app.modules.model_catalog.registry import CatalogMatch
 from app.modules.models.model import Model, ModelRoute
 from app.modules.pricing.model.pricing import PricingModifier, PricingRule
@@ -103,7 +109,46 @@ class AdminModelConfigApplicationService:
         channel = ChannelCrud(self._session).get(channel_id)
         if channel is None:
             raise NotFoundError("视频渠道不存在")
-        return _channel_view(channel)
+        view = _channel_view(channel)
+        view["runtime"] = _channel_runtime_view(self._session, channel)
+        return view
+
+    def get_channel_trend(self, *, channel_id: UUID, hours: int) -> dict[str, object]:
+        """读取渠道最近若干小时的运行时趋势采样。"""
+
+        channel = ChannelCrud(self._session).get(channel_id)
+        if channel is None:
+            raise NotFoundError("视频渠道不存在")
+        settings = get_settings()
+        if hours > settings.routing_trend_max_hours:
+            raise ValidationError(
+                f"趋势查询时长不能超过 {settings.routing_trend_max_hours} 小时",
+                code="channel.trend_hours_exceeded",
+                params={"hours": settings.routing_trend_max_hours},
+            )
+        end_at = datetime.now(UTC)
+        rows = ChannelRuntimeSampleCrud(self._session).list_range(
+            channel_id=channel_id,
+            start_at=end_at - timedelta(hours=hours),
+            end_at=end_at,
+        )
+        return {
+            "channel_id": str(channel_id),
+            "bucket_seconds": 60,
+            "start": (end_at - timedelta(hours=hours)).isoformat(),
+            "end": end_at.isoformat(),
+            "points": [
+                {
+                    "bucket_start": row.bucket_start.isoformat(),
+                    "effective_weight": float(row.effective_weight),
+                    "success_rate": float(row.success_rate) if row.success_rate is not None else None,
+                    "average_latency_ms": row.average_latency_ms,
+                    "circuit_state": row.circuit_state,
+                    "active": row.active,
+                }
+                for row in rows
+            ],
+        }
 
     def copy_channel(self, payload: dict[str, Any]) -> dict[str, object]:
         return self._write(lambda: self._copy_channel(payload["channel_id"]))
@@ -139,10 +184,102 @@ class AdminModelConfigApplicationService:
     def create_model(self, payload: dict[str, Any]) -> dict[str, object]:
         return self._write(lambda: create_model(self._session, **payload))
 
-    def match_model_preview(self, *, name: str) -> dict[str, object]:
-        """预览按模型名自动匹配的结果，供管理员在创建前确认模板与价格。"""
+    def match_model_preview(
+        self, *, name: str, provider_id: str | None = None, model_type: str | None = None
+    ) -> dict[str, object]:
+        """预览按模型名自动匹配的结果，供管理员在创建前确认模板与价格。
 
-        return _match_preview(get_model_catalog().match(name))
+        指定 ``provider_id`` 时只在该 Provider 的预设模型价格内匹配；未命中时返回该 Provider 默认模板的
+        定价骨架，并标记 ``requires_pricing_input`` 要求管理员补填单价。``model_type`` 用于在 Provider
+        内显式指定模板能力，未提供时按模型名推断。
+        """
+
+        try:
+            return _match_preview(get_model_catalog().match(name), provider_id=provider_id, model_type=model_type)
+        except ValidationError:
+            raise
+        except ValueError as exc:
+            raise ValidationError(str(exc), **error_context(exc)) from exc
+
+    def list_model_providers(self) -> dict[str, object]:
+        """返回创建模型时可选的 Provider 及其支持的模型类型。"""
+
+        return {"items": _provider_summaries()}
+
+    def batch_match_model_preview(
+        self, *, model_names: list[str], provider_id: str | None = None, model_type: str | None = None
+    ) -> dict[str, object]:
+        """批量预览所选模型的模板与预设定价。
+
+        每个模型独立返回结果：预设命中、需要手动填写价格或解析失败，供前端渲染批量配置表格。
+        重复名称只保留首次出现，空名称会被忽略。
+        """
+
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        preset_matched = 0
+        requires_pricing_input = 0
+        failed = 0
+        for raw_name in model_names:
+            name = raw_name.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            item = _batch_preview_item(name, provider_id=provider_id, model_type=model_type)
+            items.append(item)
+            if item["error"] is not None:
+                failed += 1
+            elif item["matched"]:
+                preset_matched += 1
+            if item["requires_pricing_input"]:
+                requires_pricing_input += 1
+        return {
+            "items": items,
+            "summary": {
+                "total": len(items),
+                "preset_matched": preset_matched,
+                "requires_pricing_input": requires_pricing_input,
+                "failed": failed,
+            },
+        }
+
+    def batch_create_models(self, payload: dict[str, Any]) -> dict[str, object]:
+        """批量创建模型；任一模型失败时整体回滚，不做部分创建。
+
+        不接收令牌分组，默认定价规则播种到系统默认分组。每个模型可覆盖公共的 ``provider_id``、
+        ``template_id``、``model_type`` 与 ``pricing_rules``。
+        """
+
+        items = payload["items"]
+        common_provider_id = payload.get("provider_id")
+        names = [str(item["name"]).strip() for item in items]
+        if any(not name for name in names):
+            raise ValidationError("模型名不能为空")
+        if len(names) != len(set(names)):
+            raise ValidationError("批量创建的模型名不能重复")
+
+        def action() -> dict[str, object]:
+            results: list[dict[str, object]] = []
+            for item, name in zip(items, names, strict=True):
+                try:
+                    results.append(
+                        create_model(
+                            self._session,
+                            name=name,
+                            description=item.get("description"),
+                            template_id=item.get("template_id"),
+                            provider_id=item.get("provider_id") or common_provider_id,
+                            model_type=item.get("model_type"),
+                            pricing_rules=item.get("pricing_rules"),
+                            default_concurrency_limit=item.get("default_concurrency_limit"),
+                            active=item.get("active", True),
+                        )
+                    )
+                except ValidationError as exc:
+                    raise ValidationError(f"模型“{name}”创建失败：{exc}") from exc
+            return {"items": results}
+
+        return self._write(action)
 
     def update_model(self, payload: dict[str, Any]) -> dict[str, object]:
         data = payload.copy()
@@ -462,12 +599,19 @@ def update_channel(session: Session, *, channel_id: UUID, **payload: Any) -> dic
     channel = ChannelCrud(session).get_for_update(channel_id)
     if channel is None:
         raise NotFoundError("视频渠道不存在")
+    reset_runtime = False
     for key, value in payload.items():
+        if key in {"weight", "priority"} and getattr(channel, key) != value:
+            reset_runtime = True
         setattr(channel, key, value)
     if api_key is not None:
         channel.api_key = api_key
+    if channel.active:
+        channel.auto_disabled_at = None
     _validate_channel(channel)
     _sync_channel_routes(session, channel)
+    if reset_runtime:
+        _reset_channel_route_runtime(session, channel_id)
     return {"id": str(channel.id)}
 
 
@@ -476,6 +620,8 @@ def update_channel_status(session: Session, *, channel_id: UUID, active: bool) -
     if channel is None:
         raise NotFoundError("视频渠道不存在")
     channel.active = active
+    if active:
+        channel.auto_disabled_at = None
     _sync_channel_routes(session, channel)
     return {"id": str(channel.id), "active": channel.active}
 
@@ -491,8 +637,10 @@ def delete_channel(session: Session, *, channel_id: UUID) -> None:
 
 def create_model(session: Session, **payload: Any) -> dict[str, object]:
     token_group_ids = payload.pop("token_group_ids", None)
+    manual_rules = payload.pop("pricing_rules", None)
+    provider_id = payload.pop("provider_id", None)
     match = get_model_catalog().match(payload["name"])
-    template_id, model_type = _resolve_model_template(payload, match=match)
+    template_id, model_type, preset_entry = _resolve_model_template(payload, match=match, provider_id=provider_id)
     payload["template_id"] = template_id
     payload["model_type"] = model_type
     payload["input_contract"] = _build_input_contract(template_id, model_type, payload.get("input_contract"))
@@ -500,7 +648,13 @@ def create_model(session: Session, **payload: Any) -> dict[str, object]:
     model = Model(**payload)
     if ModelCrud(session).get_by_name(model.name) is not None:
         raise ValidationError("模型名称已存在")
-    default_rules = _catalog_pricing_rules(match, _template_pricing_rules(model.template_id))
+    default_rules = _resolve_default_pricing_rules(
+        match=match,
+        template_id=template_id,
+        preset_entry=preset_entry,
+        manual_rules=manual_rules,
+        provider_id=provider_id,
+    )
     model.pricing_fields = _merge_pricing_fields(model.input_contract, model.pricing_fields, default_rules)
     _validate_model(model)
     validate_configuration(
@@ -521,31 +675,198 @@ def create_model(session: Session, **payload: Any) -> dict[str, object]:
         session,
         model=model,
         rules=default_rules,
-        modifiers=_long_context_modifiers(match.entry),
+        modifiers=_long_context_modifiers(preset_entry),
         group_ids=token_group_ids,
     )
     return {"id": str(model.id), "name": model.name, "pricing_configured": _pricing_configured(default_rules)}
 
 
-def _resolve_model_template(payload: dict[str, Any], *, match: CatalogMatch) -> tuple[str, str]:
-    """解析新建模型使用的模板与模型类型，未显式指定时按模型名自动匹配。
+def _resolve_default_pricing_rules(
+    *,
+    match: CatalogMatch,
+    template_id: str,
+    preset_entry: ModelPricingEntry | None,
+    manual_rules: list[dict[str, Any]] | None,
+    provider_id: str | None,
+) -> list[dict[str, Any]]:
+    """解析新建模型要播种的定价规则。
 
-    显式传入 ``template_id`` 时以传入值为准，此时模型类型优先取 ``model_type``，其次取该模板
-    自身声明的类型，避免把目录里另一条目的类型套到手动指定的模板上。
+    手动规则优先；其次使用 Provider 预设的目录价格；指定 Provider 但未命中预设时拒绝创建，
+    要求管理员先填写价格。未指定 Provider 时保留按模板兜底价格播种的既有行为。
     """
 
-    template_id = payload.get("template_id") or match.template_id
+    if manual_rules is not None:
+        rules = _normalize_manual_pricing_rules(manual_rules)
+        if not _pricing_configured(rules):
+            raise ValidationError("请填写完整的计费项单价")
+        return rules
+    if preset_entry is not None:
+        return _catalog_pricing_rules(match, _template_pricing_rules(template_id))
+    if provider_id is not None:
+        raise ValidationError("该模型未匹配到所选 Provider 的预设价格，请手动填写定价规则")
+    return _template_pricing_rules(template_id)
+
+
+_MANUAL_PRICING_ITEM_FIELDS = (
+    "label",
+    "position",
+    "kind",
+    "source_fields",
+    "estimate_config",
+    "free_quantity",
+    "unit_amount",
+    "active",
+)
+
+
+def _normalize_manual_pricing_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把管理员提交的定价规则裁剪为落库允许的字段，避免请求中的展示字段进入 ORM 构造。"""
+
+    normalized: list[dict[str, Any]] = []
+    for rule in rules:
+        name = rule.get("name")
+        items = rule.get("items")
+        conditions = rule.get("conditions") or []
+        if not isinstance(name, str) or not name or not isinstance(items, list) or not items:
+            raise ValidationError("定价规则不合法")
+        if not isinstance(conditions, list) or any(not isinstance(condition, dict) for condition in conditions):
+            raise ValidationError("定价规则不合法")
+        normalized_items = [
+            {key: deepcopy(item[key]) for key in _MANUAL_PRICING_ITEM_FIELDS if key in item}
+            for item in items
+            if isinstance(item, dict)
+        ]
+        if len(normalized_items) != len(items) or any(
+            not isinstance(item.get("label"), str)
+            or not isinstance(item.get("position"), int)
+            or not isinstance(item.get("kind"), str)
+            for item in normalized_items
+        ):
+            raise ValidationError("定价规则不合法")
+        normalized_rule: dict[str, Any] = {
+            "name": name,
+            "conditions": deepcopy(conditions),
+            "items": normalized_items,
+        }
+        currency = rule.get("currency")
+        if isinstance(currency, str) and currency:
+            normalized_rule["currency"] = currency
+        normalized.append(normalized_rule)
+    return normalized
+
+
+def _resolve_model_template(
+    payload: dict[str, Any], *, match: CatalogMatch, provider_id: str | None
+) -> tuple[str, str, ModelPricingEntry | None]:
+    """解析新建模型使用的模板、模型类型与可播种的预设价格条目。
+
+    未指定 Provider 时沿用按模型名自动匹配的既有行为；指定 Provider 时优先使用该 Provider 的预设
+    模型价格，未命中则回退到该 Provider 对应能力的默认模板，并要求管理员补填价格。
+    """
+
+    explicit_template_id = payload.get("template_id")
+    explicit_model_type = payload.get("model_type")
+    preset_entry = match.entry
+    if provider_id is not None and preset_entry is not None and _template_provider_id(match.template_id) != provider_id:
+        preset_entry = None
+    if provider_id is not None:
+        template_id = _resolve_provider_template_id(
+            provider_id=provider_id,
+            model_name=payload["name"],
+            model_type=explicit_model_type,
+            explicit_template_id=explicit_template_id,
+            preset_template_id=match.template_id if preset_entry is not None else None,
+        )
+    else:
+        template_id = explicit_template_id or match.template_id
     if template_id is None:
         raise ValidationError("未匹配到模型模板，请显式指定 template_id")
     template = get_provider_template_registry().get(template_id)
     if template is None:
         raise ValidationError("模型模板不存在")
-    explicit_model_type = payload.get("model_type")
     if explicit_model_type:
-        return template_id, explicit_model_type
+        return template_id, explicit_model_type, preset_entry
+    if preset_entry is not None and match.model_type is not None:
+        return template_id, match.model_type, preset_entry
     if template_id == match.template_id and match.model_type is not None:
-        return template_id, match.model_type
-    return template_id, str(template["model_type"])
+        return template_id, match.model_type, preset_entry
+    return template_id, str(template["model_type"]), preset_entry
+
+
+def _resolve_provider_template_id(
+    *,
+    provider_id: str,
+    model_name: str,
+    model_type: str | None,
+    explicit_template_id: str | None,
+    preset_template_id: str | None,
+) -> str:
+    """在指定 Provider 内选择模板：显式模板优先，其次预设条目模板，最后按模型类型或名称推断回退。"""
+
+    templates = _provider_templates(provider_id)
+    template_ids = {template["template_id"] for template in templates}
+    if explicit_template_id is not None:
+        if explicit_template_id not in template_ids:
+            raise ValidationError("所选模板不属于该模型 Provider")
+        return explicit_template_id
+    if preset_template_id is not None:
+        return preset_template_id
+    wanted_type = model_type or infer_model_type(model_name)
+    for template in templates:
+        if template["model_type"] == wanted_type:
+            return str(template["template_id"])
+    if model_type is not None:
+        raise ValidationError("所选 Provider 不支持该模型类型")
+    for template in templates:
+        if template["model_type"] == "text":
+            return str(template["template_id"])
+    return str(templates[0]["template_id"])
+
+
+def _provider_templates(provider_id: str) -> list[dict[str, Any]]:
+    """返回指定 Provider 的全部模板展示数据，Provider 不存在时抛出校验异常。"""
+
+    templates = [
+        template
+        for template in get_provider_template_registry().list_views(get_locale())
+        if template.get("provider_id") == provider_id
+    ]
+    if not templates:
+        raise ValidationError("模型 Provider 不存在")
+    return templates
+
+
+def _template_provider_id(template_id: str | None) -> str | None:
+    """读取模板声明的 Provider 标识，模板不存在时返回空。"""
+
+    if not template_id:
+        return None
+    template = get_provider_template_registry().get_view(template_id, get_locale())
+    return template.get("provider_id") if isinstance(template, dict) else None
+
+
+def _provider_summaries() -> list[dict[str, object]]:
+    """按 Provider 聚合模板支持的模型类型，保持模板声明顺序。"""
+
+    grouped: dict[str, dict[str, object]] = {}
+    for template in get_provider_template_registry().list_views(get_locale()):
+        provider_id = template.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            continue
+        summary = grouped.get(provider_id)
+        if summary is None:
+            summary = {
+                "provider_id": provider_id,
+                "provider_name": template.get("provider_name"),
+                "provider_logo_url": template.get("provider_logo_url"),
+                "model_types": [],
+            }
+            grouped[provider_id] = summary
+        model_types = summary["model_types"]
+        model_type = str(template["model_type"])
+        if isinstance(model_types, list) and model_type not in model_types:
+            model_types.append(model_type)
+    return list(grouped.values())
 
 
 def _catalog_pricing_rules(match: CatalogMatch, template_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -653,21 +974,92 @@ def _long_context_modifiers(entry: ModelPricingEntry | None) -> list[dict[str, A
     return modifiers
 
 
-def _match_preview(match: CatalogMatch) -> dict[str, object]:
+def _batch_preview_item(name: str, *, provider_id: str | None, model_type: str | None) -> dict[str, Any]:
+    """构造批量预览中的单个模型结果，解析失败时返回带错误信息的最小项。"""
+
+    try:
+        preview = _match_preview(get_model_catalog().match(name), provider_id=provider_id, model_type=model_type)
+    except (ValidationError, ValueError) as exc:
+        return {
+            "model_name": name,
+            "matched": False,
+            "requires_pricing_input": False,
+            "match_type": "none",
+            "template_id": None,
+            "model_type": None,
+            "provider_id": provider_id,
+            "provider_name": None,
+            "provider_logo_url": None,
+            "pricing_summary": [],
+            "pricing_rules": [],
+            "pricing_modifiers": [],
+            "pricing_fields": [],
+            "input_schema": None,
+            "error": str(exc),
+        }
+    return {
+        "model_name": name,
+        "matched": bool(preview["matched"]),
+        "requires_pricing_input": bool(preview["requires_pricing_input"]),
+        "match_type": str(preview["match_type"]),
+        "template_id": preview["template_id"],
+        "model_type": preview["model_type"],
+        "provider_id": preview["provider_id"],
+        "provider_name": preview["provider_name"],
+        "provider_logo_url": preview["provider_logo_url"],
+        "pricing_summary": _pricing_summary(preview["pricing_rules"]) if preview["matched"] else [],
+        "pricing_rules": preview["pricing_rules"],
+        "pricing_modifiers": preview["pricing_modifiers"],
+        "pricing_fields": preview["pricing_fields"],
+        "input_schema": preview["input_schema"],
+        "error": None,
+    }
+
+
+def _pricing_summary(rules: Any) -> list[dict[str, Any]]:
+    """把定价规则折叠为逐个计费项的价格摘要，供批量列表直接展示。"""
+
+    summary: list[dict[str, Any]] = []
+    for rule in rules if isinstance(rules, list) else []:
+        if not isinstance(rule, dict):
+            continue
+        currency = rule.get("currency") if isinstance(rule.get("currency"), str) else None
+        items = rule.get("items") if isinstance(rule.get("items"), list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("kind")
+            amount = item.get("unit_amount")
+            if kind == PricingItemKind.input_video_duration.value and amount is None:
+                continue
+            summary.append(
+                {
+                    "kind": kind if isinstance(kind, str) else None,
+                    "label": item.get("label") if isinstance(item.get("label"), str) else None,
+                    "unit_amount": None if amount is None else str(amount),
+                    "currency": currency or "USD",
+                }
+            )
+    return summary
+
+
+def _match_preview(
+    match: CatalogMatch, *, provider_id: str | None = None, model_type: str | None = None
+) -> dict[str, object]:
     """构造模型名匹配结果的预览视图，未匹配时除匹配类型外均为空。
 
-    预览展示的是创建模型时将要播种的定价规则与推导出的计价字段，因此复用同一套模板规则、
-    目录单价覆盖与计价字段推导逻辑，避免预览与落库结果不一致。
+    指定 ``provider_id`` 时只采用该 Provider 的预设价格；未命中预设时返回该 Provider 默认模板的定价
+    骨架并将 ``requires_pricing_input`` 置为真，供创建表单要求管理员填写单价。
     """
 
     preview: dict[str, object] = {
         "model_name": match.model_name,
         "normalized_name": match.normalized_name,
         "match_type": match.match_type,
-        "matched": match.matched,
-        "template_id": match.template_id,
-        "model_type": match.model_type,
-        "provider_id": None,
+        "matched": False,
+        "template_id": None,
+        "model_type": None,
+        "provider_id": provider_id,
         "provider_name": None,
         "provider_logo_url": None,
         "currency": None,
@@ -678,23 +1070,39 @@ def _match_preview(match: CatalogMatch) -> dict[str, object]:
         "pricing_modifiers": [],
         "pricing_fields": [],
         "input_schema": None,
+        "requires_pricing_input": False,
     }
-    if match.template_id is None or match.model_type is None:
+    if provider_id is None and match.template_id is None:
         return preview
-    provider_id, provider_name, provider_logo_url = _provider_identities().get(match.template_id, (None, None, None))
-    preview["provider_id"] = provider_id
-    preview["provider_name"] = provider_name
-    preview["provider_logo_url"] = provider_logo_url
-    rules = _catalog_pricing_rules(match, _template_pricing_rules(match.template_id))
-    preview["pricing_rules"] = rules
-    preview["pricing_modifiers"] = _long_context_modifiers(match.entry)
-    entry = match.entry
-    if entry is not None:
-        preview["currency"] = entry.currency
-        preview["source_url"] = entry.source_url
-        preview["price_updated_at"] = entry.price_updated_at
-        preview["note"] = entry.note
-    contract = _build_input_contract(match.template_id, match.model_type, None)
+    template_id, model_type_value, preset_entry = _resolve_model_template(
+        {"name": match.model_name, "model_type": model_type}, match=match, provider_id=provider_id
+    )
+    resolved_provider_id, provider_name, provider_logo_url = _provider_identities().get(template_id, (None, None, None))
+    rules = (
+        _catalog_pricing_rules(match, _template_pricing_rules(template_id))
+        if preset_entry is not None
+        else _template_pricing_rules(template_id)
+    )
+    preview.update(
+        {
+            "match_type": match.match_type if preset_entry is not None or provider_id is None else "provider_fallback",
+            "matched": preset_entry is not None,
+            "template_id": template_id,
+            "model_type": model_type_value,
+            "provider_id": provider_id or resolved_provider_id,
+            "provider_name": provider_name,
+            "provider_logo_url": provider_logo_url,
+            "pricing_rules": rules,
+            "pricing_modifiers": _long_context_modifiers(preset_entry),
+            "requires_pricing_input": preset_entry is None or not _pricing_configured(rules),
+        }
+    )
+    if preset_entry is not None:
+        preview["currency"] = preset_entry.currency
+        preview["source_url"] = preset_entry.source_url
+        preview["price_updated_at"] = preset_entry.price_updated_at
+        preview["note"] = preset_entry.note
+    contract = _build_input_contract(template_id, model_type_value, None)
     preview["pricing_fields"] = _merge_pricing_fields(contract, [], rules)
     preview["input_schema"] = _contract_input_schema(contract)
     return preview
@@ -1370,6 +1778,74 @@ def _channel_view(channel: Channel, *, groups_by_id: dict[int, TokenGroup] | Non
         "weight": channel.weight,
         "healthy": channel.healthy,
     }
+
+
+def _reset_channel_route_runtime(session: Session, channel_id: UUID) -> None:
+    """管理员调整初始权重或优先级后清除路由运行时权重，让新配置立即生效。"""
+
+    route_ids = [route.id for route in ConfigurationChannelCrud(session).list_routes_for_channel(channel_id=channel_id)]
+    try:
+        get_channel_runtime().reset_routes(route_ids)
+    except Exception:
+        logger.warning("渠道路由运行时状态重置失败 channel_id=%s", channel_id, exc_info=True)
+
+
+def _channel_runtime_view(session: Session, channel: Channel) -> dict[str, object] | None:
+    """读取渠道运行时只读状态；Redis 不可用时返回 ``None`` 而不是让详情请求失败。"""
+
+    settings = get_settings()
+    if not settings.routing_runtime_enabled:
+        return None
+    routes = ConfigurationChannelCrud(session).list_routes_for_channel(channel_id=channel.id)
+    runtime = get_channel_runtime()
+    try:
+        route_states = runtime.read_route_states([route.id for route in routes])
+        channel_state = runtime.read_channel_state(channel.id)
+    except Exception:
+        logger.warning("读取渠道运行时状态失败 channel_id=%s", channel.id, exc_info=True)
+        return None
+
+    weights = [_float_or_default(route_states.get(route.id, {}).get("w"), route.weight) for route in routes]
+    success_rates = [
+        value for route in routes if (value := _float_or_none(route_states.get(route.id, {}).get("sr"))) is not None
+    ]
+    latencies = [
+        value for route in routes if (value := _float_or_none(route_states.get(route.id, {}).get("lat"))) is not None
+    ]
+    open_until_ms = int(channel_state.get("open_until") or 0)
+    last_probe_at_ms = int(channel_state.get("last_probe_at") or 0)
+    last_probe = None
+    if last_probe_at_ms > 0:
+        last_probe = {
+            "tested_at": datetime.fromtimestamp(last_probe_at_ms / 1000, UTC).isoformat(),
+            "succeeded": channel_state.get("last_probe_ok") == "1",
+            "latency_ms": int(channel_state.get("last_probe_latency_ms") or 0),
+        }
+    return {
+        "effective_weight": round(sum(weights) / len(weights), 2) if weights else float(channel.weight),
+        "initial_weight": channel.weight,
+        "state": channel_state.get("state") or "closed",
+        "success_rate": round(sum(success_rates) / len(success_rates), 4) if success_rates else None,
+        "average_latency_ms": round(sum(latencies) / len(latencies)) if latencies else None,
+        "consecutive_failures": int(channel_state.get("fail") or 0),
+        "open_until": datetime.fromtimestamp(open_until_ms / 1000, UTC).isoformat() if open_until_ms > 0 else None,
+        "auto_disabled_at": channel.auto_disabled_at.isoformat() if channel.auto_disabled_at else None,
+        "last_probe": last_probe,
+    }
+
+
+def _float_or_default(value: object, fallback: float) -> float:
+    parsed = _float_or_none(value)
+    return parsed if parsed is not None else float(fallback)
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _provider_identities() -> dict[str, tuple[str | None, str | None, str | None]]:

@@ -1,10 +1,11 @@
 """用户账号 SQLModel，定义登录身份及其关联资源。"""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, Index, Numeric, String, UniqueConstraint, func
 from sqlmodel import Field, Relationship
 
 from app.core.database import SQLModelBase
@@ -38,6 +39,22 @@ class User(SQLModelBase, table=True):
     )
     is_admin: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, default=False, comment="是否具备后台管理员角色")
+    )
+    balance_alert_threshold: Decimal | None = Field(
+        default=None,
+        sa_column=Column(
+            Numeric(18, 6),
+            nullable=True,
+            comment="用户自设余额预警阈值（USD），为空表示不接收余额预警邮件",
+        ),
+    )
+    balance_alert_email: str | None = Field(
+        default=None,
+        sa_column=Column(
+            String(320),
+            nullable=True,
+            comment="用户自设的余额预警收件邮箱，为空时使用注册邮箱",
+        ),
     )
     tokens: list["Token"] = Relationship(back_populates="user")
     wallet: "Wallet" = Relationship(back_populates="user", sa_relationship_kwargs={"uselist": False})

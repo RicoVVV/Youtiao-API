@@ -69,11 +69,18 @@ def match_fallback(normalized_name: str) -> tuple[str, str] | None:
     vendor = next((vendor for pattern, vendor in _VENDOR_PATTERNS if pattern.search(normalized_name)), None)
     if vendor is None:
         return None
-    capability = next(
-        (capability for pattern, capability in _CAPABILITY_PATTERNS if pattern.search(normalized_name)),
-        DEFAULT_CAPABILITY,
-    )
+    capability = infer_model_type(normalized_name)
     template_id = _FALLBACK_TEMPLATES.get((vendor, capability))
     if template_id is None:
         return None
     return template_id, capability
+
+
+def infer_model_type(model_name: str) -> str:
+    """按模型名中的能力关键词推断模型类型，未出现关键词时按文本处理。"""
+
+    normalized_name = normalize_model_name(model_name)
+    return next(
+        (capability for pattern, capability in _CAPABILITY_PATTERNS if pattern.search(normalized_name)),
+        DEFAULT_CAPABILITY,
+    )

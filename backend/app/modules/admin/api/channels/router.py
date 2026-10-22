@@ -13,9 +13,12 @@ from app.modules.admin.api.channels.schemas import (
     ChannelStatusUpdateRequest,
     ChannelTestRequest,
     ChannelUpdateRequest,
+    ChannelUpstreamModelsRequest,
+    ChannelUpstreamModelsResponse,
 )
 from app.modules.admin.application.model_config.channel_testing import ChannelTestApplicationService
 from app.modules.admin.application.model_config.services import AdminModelConfigApplicationService
+from app.modules.admin.application.model_config.upstream_models import UpstreamModelApplicationService
 
 router = APIRouter(prefix="/channels", tags=["管理员视频配置"])
 
@@ -78,6 +81,15 @@ def get_channel(
     return AdminModelConfigApplicationService(session).get_channel(channel_id)
 
 
+@router.get("/trend", dependencies=[Depends(get_admin_user_id)], summary="Query channel runtime trend")
+def channel_trend(
+    session: Annotated[Session, Depends(get_db)],
+    channel_id: Annotated[UUID, Query()],
+    hours: Annotated[int, Query(ge=1, le=720)] = 24,
+) -> dict[str, object]:
+    return AdminModelConfigApplicationService(session).get_channel_trend(channel_id=channel_id, hours=hours)
+
+
 @router.post("/test", summary="测试渠道上游连通性")
 async def test_channel(
     payload: ChannelTestRequest, admin_user_id: Annotated[UUID, Depends(get_admin_user_id)]
@@ -85,3 +97,13 @@ async def test_channel(
     return await ChannelTestApplicationService(get_async_session_factory()).test_channel(
         admin_user_id=admin_user_id, **payload.model_dump()
     )
+
+
+@router.post(
+    "/fetch-upstream-models",
+    response_model=ChannelUpstreamModelsResponse,
+    dependencies=[Depends(get_admin_user_id)],
+    summary="拉取上游渠道可用模型",
+)
+async def fetch_upstream_models(payload: ChannelUpstreamModelsRequest) -> dict[str, object]:
+    return await UpstreamModelApplicationService(get_async_session_factory()).fetch_models(**payload.model_dump())

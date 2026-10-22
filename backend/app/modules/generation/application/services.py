@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bootstrap.container import get_channel_provider_factory, get_provider_template_registry
+from app.core.config import get_settings
 from app.core.errors import (
     ApplicationError,
     UpstreamTimeoutError,
@@ -33,9 +34,11 @@ from app.modules.channels.application.concurrency import (
     release_task_concurrency,
     reserve_task_concurrency,
 )
+from app.modules.channels.application.failures import is_channel_failure
 from app.modules.channels.application.model_mapping import apply_upstream_model_name
 from app.modules.channels.application.routing import select_channel_in_group_order
 from app.modules.channels.crud.channels import ChannelCrud
+from app.modules.channels.runtime.channel_runtime import get_channel_runtime
 from app.modules.channels.runtime.routing_snapshot import get_generation_configuration_snapshot
 from app.modules.generation.application.contracts import GenerationBilling, PreparedGeneration
 from app.modules.pricing.application.engine import (
@@ -213,7 +216,8 @@ class _GenerationServiceBase:
         plan = None
         attempted = False
         unmatched_group_ids: list[int] = []
-        for candidate in select_channel_in_group_order(channels, group_ids=group_ids):
+        runtime = get_channel_runtime() if get_settings().routing_runtime_enabled else None
+        for candidate in select_channel_in_group_order(channels, group_ids=group_ids, runtime=runtime):
             attempted = True
             try:
                 candidate_plan = select_pricing_plan(
@@ -324,7 +328,12 @@ class _GenerationServiceBase:
                 response_metadata={"pricing": decision.snapshot} if decision is not None else None,
             )
         return PreparedGeneration(
-            provider=provider, provider_request=provider_request, billing=billing, uploads=list(uploads)
+            provider=provider,
+            provider_request=provider_request,
+            billing=billing,
+            route_id=route.binding.id,
+            route_base_weight=route.binding.weight,
+            uploads=list(uploads),
         )
 
     @staticmethod
@@ -346,8 +355,10 @@ class _GenerationServiceBase:
         completed_at: datetime | None = None,
         duration_ms: int | None = None,
         first_token_duration_ms: int | None = None,
+        channel_failure: bool = False,
+        record_outcome: bool = True,
     ) -> None:
-        """在短事务内结算或退款，并释放并发占用。"""
+        """在短事务内结算或退款，释放并发占用，并记录渠道运行时反馈。"""
 
         async with self._session_factory() as session:
             await session.run_sync(
@@ -361,14 +372,40 @@ class _GenerationServiceBase:
                 duration_ms,
                 first_token_duration_ms,
             )
+        if record_outcome and (success or channel_failure):
+            await asyncio.to_thread(
+                _record_runtime_outcome,
+                prepared,
+                success=success,
+                latency_ms=first_token_duration_ms or duration_ms or 0,
+            )
 
     async def _finalize_cancelled(self, prepared: PreparedGeneration) -> None:
         """协程被取消时以可屏蔽取消的方式收尾，避免预占资金与并发租约悬空。"""
 
         try:
-            await asyncio.shield(self._finalize(prepared, success=False, usage=None, upstream_payload=None))
+            await asyncio.shield(
+                self._finalize(prepared, success=False, usage=None, upstream_payload=None, record_outcome=False)
+            )
         except Exception:
             logger.exception("生成请求取消后收尾失败 resource_id=%s", prepared.billing.resource_id)
+
+
+def _record_runtime_outcome(prepared: PreparedGeneration, *, success: bool, latency_ms: int) -> None:
+    """把一次业务结果写入渠道运行时；任何异常只记录日志，不影响结算与响应。"""
+
+    if not get_settings().routing_runtime_enabled:
+        return
+    try:
+        get_channel_runtime().record_outcome(
+            route_id=prepared.route_id,
+            channel_id=prepared.billing.channel_id,
+            base_weight=prepared.route_base_weight,
+            success=success,
+            latency_ms=latency_ms,
+        )
+    except Exception:
+        logger.warning("渠道运行时反馈写入失败 route_id=%s", prepared.route_id, exc_info=True)
 
 
 def _finalize_sync(
@@ -753,6 +790,7 @@ class ImageGenerationApplicationService(_GenerationServiceBase):
         return await self._execute(prepared)
 
     async def _execute(self, prepared: PreparedGeneration) -> dict[str, Any]:
+        started_at_counter = perf_counter()
         try:
             if prepared.uploads:
                 result = await prepared.provider.edit_image(prepared.provider_request, prepared.uploads)
@@ -762,13 +800,21 @@ class ImageGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "图片") from exc
         await self._finalize(
             prepared,
             success=True,
             usage=_response_usage(result),
             upstream_payload=summarize_upstream_payload(result),
+            duration_ms=_duration_ms(started_at_counter),
         )
         return result
 
@@ -815,7 +861,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "文本") from exc
         usage = _response_usage(result)
         completed_at = datetime.now(UTC)
@@ -858,7 +911,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
 
@@ -893,7 +953,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
 
@@ -923,7 +990,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "文本") from exc
         usage = _response_usage(result)
         completed_at = datetime.now(UTC)
@@ -966,7 +1040,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             await self._finalize_cancelled(prepared)
             raise
         except ProviderError as exc:
-            await self._finalize(prepared, success=False, usage=None, upstream_payload=exc.response_body)
+            await self._finalize(
+                prepared,
+                success=False,
+                usage=None,
+                upstream_payload=exc.response_body,
+                duration_ms=_duration_ms(started_at_counter),
+                channel_failure=is_channel_failure(exc),
+            )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
 
@@ -987,6 +1068,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
             completed = False
             pending = b""
             first_token_duration_ms: int | None = None
+            stream_error: BaseException | None = None
             try:
                 async for chunk in stream:
                     if first_token_duration_ms is None and _stream_chunk_has_text(pending, chunk):
@@ -1001,7 +1083,14 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 if first_token_duration_ms is None and _stream_chunk_has_text(b"", pending + b"\n"):
                     first_token_duration_ms = _duration_ms(started_at_counter)
                 completed = True
+            except BaseException as exc:
+                stream_error = exc
+                raise
             finally:
+                # 客户端主动断开不归因渠道；上游中途异常才计入熔断与权重衰减。
+                channel_failure = stream_error is not None and not isinstance(
+                    stream_error, asyncio.CancelledError | GeneratorExit
+                )
                 try:
                     await asyncio.shield(
                         self._finalize(
@@ -1013,6 +1102,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                             completed_at=datetime.now(UTC),
                             duration_ms=_duration_ms(started_at_counter),
                             first_token_duration_ms=first_token_duration_ms,
+                            channel_failure=channel_failure,
                         )
                     )
                 except Exception:

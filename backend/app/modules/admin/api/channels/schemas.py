@@ -44,6 +44,23 @@ class ChannelTestRequest(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class ChannelUpstreamModelsRequest(BaseModel):
+    """拉取上游可用模型的连接信息。
+
+    ``base_url`` 与 ``api_key`` 用于尚未保存的新渠道；只提供 ``channel_id`` 时复用该渠道已保存的地址、
+    密钥与请求头。``header_override`` 用于需要额外鉴权头的上游网关。
+    """
+
+    base_url: str | None = Field(default=None, max_length=512)
+    api_key: str | None = Field(default=None, max_length=4096, repr=False)
+    channel_id: UUID | None = None
+    header_override: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChannelUpstreamModelsResponse(BaseModel):
+    models: list[str]
+
+
 class ChannelLatestTestSnapshotResponse(BaseModel):
     tested_at: str
     status: Literal["succeeded", "failed"]

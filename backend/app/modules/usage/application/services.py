@@ -1,15 +1,20 @@
 """使用记录应用服务，协调调用审计与钱包余额变化。"""
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError
 from app.modules.usage.application.statistics_services import UsageStatisticsApplicationService
 from app.modules.usage.crud.usage_record_crud import UsageRecordCrud
 from app.modules.usage.model import UsageRecord, UsageRecordStatus
+from app.modules.wallet.application.balance_alert import BalanceAlertApplicationService
 from app.modules.wallet.application.services import WalletApplicationService
 from sqlmodel import Session
+
+logger = logging.getLogger(__name__)
 
 
 class UsageApplicationService:
@@ -61,7 +66,10 @@ class UsageApplicationService:
                 response_metadata=dict(response_metadata) if response_metadata is not None else None,
             )
         )
-        self._wallet.reserve_usage_balance(user_id=user_id, usage_record_id=record.id, amount=amount, reason=reason)
+        wallet = self._wallet.reserve_usage_balance(
+            user_id=user_id, usage_record_id=record.id, amount=amount, reason=reason
+        )
+        self._notify_low_balance(user_id=user_id, balance_before=wallet.balance + amount, balance_after=wallet.balance)
         return record
 
     def create_settled_postpaid(
@@ -136,7 +144,10 @@ class UsageApplicationService:
                 ),
             )
         )
-        self._wallet.charge_usage_balance(user_id=user_id, usage_record_id=record.id, amount=amount, reason=reason)
+        wallet = self._wallet.charge_usage_balance(
+            user_id=user_id, usage_record_id=record.id, amount=amount, reason=reason
+        )
+        self._notify_low_balance(user_id=user_id, balance_before=wallet.balance + amount, balance_after=wallet.balance)
         return record
 
     def create_failed_postpaid(
@@ -365,6 +376,16 @@ class UsageApplicationService:
         if upstream_response_payload is not None:
             record.upstream_response_payload = dict(upstream_response_payload)
         return record
+
+    def _notify_low_balance(self, *, user_id: UUID, balance_before: Decimal, balance_after: Decimal) -> None:
+        """扣费后懒校验余额预警；提醒失败只记录日志，不影响计费主流程。"""
+
+        try:
+            BalanceAlertApplicationService(self._session, get_settings()).evaluate_after_usage(
+                user_id=user_id, balance_before=balance_before, balance_after=balance_after
+            )
+        except Exception:
+            logger.exception("余额预警校验失败 user_id=%s", user_id)
 
     def list_owned(
         self, *, range_name: str | None, start_at: datetime | None, end_at: datetime | None, **kwargs

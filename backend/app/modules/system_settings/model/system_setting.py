@@ -44,6 +44,15 @@ class SystemSetting(SQLModelBase, table=True):
     smtp_password_ciphertext: str = Field(default="", sa_column=Column(Text(), nullable=False, server_default=""))
     smtp_from_email: str = Field(default="", sa_column=Column(String(320), nullable=False, server_default=""))
     smtp_from_name: str = Field(default="", sa_column=Column(String(255), nullable=False, server_default=""))
+    balance_alert_enabled: bool = Field(
+        default=False,
+        sa_column=Column(
+            Boolean,
+            nullable=False,
+            server_default="false",
+            comment="是否启用用户余额预警邮件，依赖邮箱注册验证提供用户邮箱",
+        ),
+    )
     sidebar_visibility: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(

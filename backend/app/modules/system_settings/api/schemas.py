@@ -36,6 +36,7 @@ class AdminSystemSettingsResponse(BaseModel):
     smtp_password_configured: bool
     smtp_from_email: str
     smtp_from_name: str
+    balance_alert_enabled: bool
 
 
 class SystemSettingsUpdateRequest(BaseModel):
@@ -60,6 +61,9 @@ class SystemSettingsUpdateRequest(BaseModel):
     )
     smtp_from_email: str | None = Field(default=None, max_length=320)
     smtp_from_name: str | None = Field(default=None, max_length=255)
+    balance_alert_enabled: bool | None = Field(
+        default=None, description="开启后按用户设置的阈值发送余额提醒邮件，必须同时开启邮箱注册验证"
+    )
 
     @field_validator("server_url", "logo_url", mode="before")
     @classmethod

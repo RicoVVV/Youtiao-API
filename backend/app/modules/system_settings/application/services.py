@@ -56,6 +56,7 @@ class SystemSettingsApplicationService:
         "smtp_username",
         "smtp_from_email",
         "smtp_from_name",
+        "balance_alert_enabled",
     )
     _text_fields = (
         "system_name",
@@ -71,7 +72,12 @@ class SystemSettingsApplicationService:
         "smtp_from_email",
         "smtp_from_name",
     )
-    _nullable_skip_fields = ("email_verification_enabled", "smtp_port", "smtp_security")
+    _nullable_skip_fields = (
+        "email_verification_enabled",
+        "smtp_port",
+        "smtp_security",
+        "balance_alert_enabled",
+    )
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self._session = session
@@ -106,6 +112,7 @@ class SystemSettingsApplicationService:
         if values:
             try:
                 self._crud.update(setting, values)
+                self._validate_balance_alert_ready(setting)
                 if setting.email_verification_enabled:
                     self._validate_smtp_ready(setting)
                 self._session.commit()
@@ -174,6 +181,18 @@ class SystemSettingsApplicationService:
             "from_name": setting.smtp_from_name or setting.system_name,
         }
 
+    def read_balance_alert_config(self) -> dict[str, Any]:
+        """只读返回余额预警运行配置；配置行缺失或邮箱注册未开启时视为未开启，不写库。"""
+
+        setting = self._crud.get()
+        if setting is None or not setting.balance_alert_enabled or not setting.email_verification_enabled:
+            return {"enabled": False, "system_name": "", "server_url": ""}
+        return {
+            "enabled": True,
+            "system_name": setting.system_name or DEFAULT_SYSTEM_NAME,
+            "server_url": setting.server_url,
+        }
+
     def _get_or_create_default(self) -> SystemSetting:
         setting = self._crud.get()
         if setting is not None:
@@ -212,6 +231,15 @@ class SystemSettingsApplicationService:
 
     def _fernet(self) -> Fernet:
         return derive_fernet(self._settings.jwt_signing_key, SMTP_CONFIG_PURPOSE)
+
+    @staticmethod
+    def _validate_balance_alert_ready(setting: SystemSetting) -> None:
+        """余额预警依赖邮箱注册验证提供的用户邮箱。"""
+
+        if not setting.balance_alert_enabled:
+            return
+        if not setting.email_verification_enabled:
+            raise ValidationError("余额预警依赖邮箱注册验证，开启余额预警时必须同时开启邮箱注册验证")
 
     @staticmethod
     def _validate_smtp_ready(setting: SystemSetting) -> None:

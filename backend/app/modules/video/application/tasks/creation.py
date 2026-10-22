@@ -645,6 +645,9 @@ def _provider_error_details(
         return fallback_code, _public_error_message(fallback_message)
     code = source.get("code")
     message = source.get("message")
+    # 上游为框架默认错误形态（如 FastAPI 的 {"detail": ...}）时没有 message 字段，回退到 detail 并保留调度文案
+    if not isinstance(message, str) or not message.strip():
+        message = source.get("detail")
     return (
         code if isinstance(code, str) and _PUBLIC_ERROR_CODE_PATTERN.fullmatch(code) else fallback_code,
         _public_error_message(message if isinstance(message, str) else fallback_message),

@@ -54,4 +54,6 @@ class PreparedGeneration:
     provider: GenerationProvider
     provider_request: dict[str, Any]
     billing: GenerationBilling
+    route_id: UUID
+    route_base_weight: int
     uploads: list[ProviderUpload] = field(default_factory=list)

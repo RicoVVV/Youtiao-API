@@ -15,6 +15,7 @@ import { invalidatePublicSystemSettingsCache } from "@/lib/use-system-settings";
 import {
   getAdminSystemSettings,
   updateAdminSystemSettings,
+  type BalanceAlertUpdatePayload,
   type EmailVerificationUpdatePayload,
   type SmtpSecurity,
 } from "@/lib/system-settings";
@@ -76,12 +77,15 @@ export function AuthSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
+  /** 余额预警总开关：依赖邮箱验证开启（用户侧阈值由用户自行设置） */
+  const [alertEnabled, setAlertEnabled] = useState(false);
   const [security, setSecurity] = useState<SmtpSecurity>("starttls");
   const [form, setForm] = useState<Record<SmtpFieldKey, string>>(EMPTY_FORM);
   const [passwordConfigured, setPasswordConfigured] = useState(false);
   /** 加载完成时的初始快照（不含密码，密码框恒为空、按需提交），用于差异提交 */
   const [initial, setInitial] = useState<{
     enabled: boolean;
+    alertEnabled: boolean;
     security: SmtpSecurity;
     form: Record<SmtpFieldKey, string>;
   } | null>(null);
@@ -114,11 +118,13 @@ export function AuthSettingsPanel() {
         smtp_from_name: data.smtp_from_name ?? "",
       };
       setEnabled(data.email_verification_enabled);
+      setAlertEnabled(data.balance_alert_enabled);
       setSecurity(data.smtp_security ?? "starttls");
       setForm(snapshotForm);
       setPasswordConfigured(data.smtp_password_configured);
       setInitial({
         enabled: data.email_verification_enabled,
+        alertEnabled: data.balance_alert_enabled,
         security: data.smtp_security ?? "starttls",
         form: snapshotForm,
       });
@@ -169,9 +175,14 @@ export function AuthSettingsPanel() {
     }
 
     // 差异提交：只提交与初始快照不同的字段
-    const payload: Partial<EmailVerificationUpdatePayload> = {};
+    const payload: Partial<
+      EmailVerificationUpdatePayload & BalanceAlertUpdatePayload
+    > = {};
     if (enabled !== initial.enabled) {
       payload.email_verification_enabled = enabled;
+    }
+    if (alertEnabled !== initial.alertEnabled) {
+      payload.balance_alert_enabled = alertEnabled;
     }
     if (security !== initial.security) {
       payload.smtp_security = security;
@@ -209,11 +220,13 @@ export function AuthSettingsPanel() {
         smtp_from_name: data.smtp_from_name ?? "",
       };
       setEnabled(data.email_verification_enabled);
+      setAlertEnabled(data.balance_alert_enabled);
       setSecurity(data.smtp_security ?? "starttls");
       setForm(snapshotForm);
       setPasswordConfigured(data.smtp_password_configured);
       setInitial({
         enabled: data.email_verification_enabled,
+        alertEnabled: data.balance_alert_enabled,
         security: data.smtp_security ?? "starttls",
         form: snapshotForm,
       });
@@ -259,12 +272,38 @@ export function AuthSettingsPanel() {
         <div className="flex items-center gap-3">
           <Switch
             checked={enabled}
-            onCheckedChange={setEnabled}
+            onCheckedChange={(v) => {
+              setEnabled(v);
+              // 邮箱验证是余额预警的前置条件，关闭时强制联动关闭
+              if (!v) setAlertEnabled(false);
+            }}
             checkedLabel={t("authSettings.switchOn")}
             uncheckedLabel={t("authSettings.switchOff")}
           />
           <p className="text-sm text-muted-foreground">
             {t("authSettings.enableHint")}
+          </p>
+        </div>
+      </section>
+
+      {/* 余额预警总开关：依赖邮箱验证开启 */}
+      <section className="space-y-4">
+        <SectionHeader
+          title={t("authSettings.balanceAlertSectionTitle")}
+          description={t("authSettings.balanceAlertSectionDesc")}
+        />
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={alertEnabled}
+            onCheckedChange={setAlertEnabled}
+            disabled={!enabled}
+            checkedLabel={t("authSettings.switchOn")}
+            uncheckedLabel={t("authSettings.switchOff")}
+          />
+          <p className="text-sm text-muted-foreground">
+            {enabled
+              ? t("authSettings.balanceAlertHint")
+              : t("authSettings.balanceAlertRequiresEmail")}
           </p>
         </div>
       </section>

@@ -8,6 +8,10 @@ from sqlmodel import Session
 
 from app.core.auth import get_user_id
 from app.core.database import get_db
+from app.modules.user.api.profile.schemas import (
+    BalanceAlertSettingsResponse,
+    BalanceAlertUpdateRequest,
+)
 from app.modules.user.application.profile.services import UserProfileApplicationService
 
 router = APIRouter(prefix="/user", tags=["用户资料"])
@@ -30,6 +34,29 @@ def get_user_info(user_id: Annotated[UUID, Depends(get_user_id)], session: Annot
         "is_admin": profile.is_admin,
         "balance": profile.balance,
         "usage": profile.usage,
+        "email": profile.email,
+        "balance_alert_threshold": profile.balance_alert_threshold,
+        "balance_alert_email": profile.balance_alert_email,
         "created_at": profile.created_at,
         "membership": profile.membership,
     }
+
+
+@router.post(
+    "/balance-alert/update",
+    response_model=BalanceAlertSettingsResponse,
+    summary="更新用户余额预警设置",
+)
+def update_balance_alert_settings(
+    payload: BalanceAlertUpdateRequest,
+    user_id: Annotated[UUID, Depends(get_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict[str, str | None]:
+    """设置或清除当前用户的余额预警阈值与收件邮箱。
+
+    参数：threshold 为正数阈值，传 null 关闭余额预警；email 留空时使用注册邮箱。
+    返回值：更新后的阈值与自设邮箱，未设置时为 null。
+    异常：阈值非正数、邮箱格式不合法，或未绑定邮箱且未填写收件邮箱时返回 422。
+    """
+
+    return UserProfileApplicationService(session).update_balance_alert_settings(user_id=user_id, **payload.model_dump())

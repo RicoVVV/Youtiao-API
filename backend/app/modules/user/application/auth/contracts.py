@@ -28,3 +28,6 @@ class UserProfileData:
     balance: str
     usage: str
     membership: dict
+    balance_alert_threshold: str | None = None
+    email: str | None = None
+    balance_alert_email: str | None = None
