@@ -1359,6 +1359,7 @@ def _seed_default_pricing_rules(
     if not groups:
         return
     created_rule_ids: list[UUID] = []
+    rule_crud = PricingRuleCrud(session)
     for group in groups:
         for rule in rules:
             items = [deepcopy(item) for item in rule.get("items", [])]
@@ -1376,16 +1377,21 @@ def _seed_default_pricing_rules(
             if isinstance(currency, str) and currency:
                 payload["currency"] = currency
             created = _create_pricing_rule_for_model(session, model=model, payload=payload)
+            # 会话关闭 autoflush，逐条 flush 才能让后续规则按已落库的优先级顺延取号。
+            rule_crud.flush()
             created_rule_ids.append(UUID(str(created["id"])))
     if not modifiers or not created_rule_ids:
         return
     # 计费项此时尚未落库，先 flush 再播种修正项，否则修正项的方案内计费项校验取不到数据。
     PricingItemCrud(session).flush()
+    modifier_crud = PricingModifierCrud(session)
     for rule_id in created_rule_ids:
         for modifier in modifiers:
             modifier_payload = deepcopy(modifier)
             modifier_payload.pop("priority", None)
             create_pricing_modifier(session, pricing_rule_id=rule_id, **modifier_payload)
+            # 同理逐条 flush，避免同一方案内的修正项取到相同优先级。
+            modifier_crud.flush()
 
 
 def _resolve_seed_groups(session: Session, group_ids: list[int] | None) -> list[TokenGroup]:

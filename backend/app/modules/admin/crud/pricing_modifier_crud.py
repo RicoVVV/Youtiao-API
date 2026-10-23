@@ -14,6 +14,9 @@ class PricingModifierCrud:
     def add(self, modifier: PricingModifier) -> None:
         self._session.add(modifier)
 
+    def flush(self) -> None:
+        self._session.flush()
+
     def get(self, modifier_id: UUID) -> PricingModifier | None:
         return self._session.get(PricingModifier, modifier_id)
 
