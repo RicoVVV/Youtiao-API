@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from starlette.datastructures import UploadFile
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import ValidationError
 from app.modules.pricing.application.engine import MaterialFacts
 from app.modules.video.application.materials.metering import (
@@ -52,6 +52,7 @@ async def normalize_video_materials(
     uploaded_files: dict[str, list[UploadFile]],
     public_base_url: str,
 ) -> NormalizedMaterialRequest:
+    settings = get_settings()
     normalized_request = dict(request)
     unsupported_upload_fields = set(uploaded_files) - set(material_fields)
     if unsupported_upload_fields:
@@ -67,6 +68,9 @@ async def normalize_video_materials(
     image_dimensions: dict[str, list[tuple[int, int]]] = defaultdict(list)
     material_snapshot: list[dict[str, object]] = []
     materials: list[NormalizedInputMaterial] = []
+    total_bytes = 0
+    prepared_fields: list[tuple[str, list[str], bool, list[str], list[UploadFile]]] = []
+    declared_count = 0
     for field_name, declaration in material_fields.items():
         if not isinstance(field_name, str) or not isinstance(declaration, dict):
             raise ValueError("视频模型素材契约不合法")
@@ -84,11 +88,22 @@ async def normalize_video_materials(
                 code="contract.field_single_material_only",
                 params={"name": field_name},
             )
+        # 先按声明数量拒绝超限请求，避免为注定失败的请求逐个下载大文件。
+        declared_count += len(values) + len(files)
+        if declared_count > settings.video_material_max_count_per_request:
+            raise ValidationError(
+                "请求素材数量超出限制",
+                code="video.material_count_exceeded",
+                params={"limit": settings.video_material_max_count_per_request},
+            )
+        prepared_fields.append((field_name, allowed_categories, multiple, values, files))
+    for field_name, allowed_categories, multiple, values, files in prepared_fields:
         resolved_values: list[str] = []
         for position, value in enumerate(values):
             if _supports_public_image_urls(allowed_categories):
                 _validate_public_image_url(value)
                 probe = await probe_remote_url(value, allowed_categories=allowed_categories)
+                total_bytes = _accumulate_material_bytes(total_bytes, probe.size_bytes, settings=settings)
                 _record_probe_facts(
                     field_name,
                     probe,
@@ -108,6 +123,7 @@ async def normalize_video_materials(
                 allowed_categories=allowed_categories,
             )
             materials.append(material)
+            total_bytes = _accumulate_material_bytes(total_bytes, material.size_bytes, settings=settings)
             resolved_values.append(resolve_material_public_url(material.resource_id, public_base_url=public_base_url))
         for file in files:
             position = len(resolved_values)
@@ -118,6 +134,7 @@ async def normalize_video_materials(
                 allowed_categories=allowed_categories,
             )
             materials.append(material)
+            total_bytes = _accumulate_material_bytes(total_bytes, material.size_bytes, settings=settings)
             resolved_values.append(resolve_material_public_url(material.resource_id, public_base_url=public_base_url))
         if resolved_values:
             normalized_request[field_name] = resolved_values if multiple else resolved_values[0]
@@ -179,6 +196,19 @@ def _string_values(value: Any, *, field_name: str, multiple: bool) -> list[str]:
             params={"name": field_name, "expected": "string"},
         )
     return [value]
+
+
+def _accumulate_material_bytes(total: int, size: int, *, settings: Settings) -> int:
+    """累加本次请求已解析的素材字节数，超过单请求总量上限时立即拒绝。"""
+
+    total += size
+    if total > settings.video_material_max_total_bytes_per_request:
+        raise ValidationError(
+            "请求素材总大小超出限制",
+            code="video.material_total_bytes_exceeded",
+            params={"limit_bytes": settings.video_material_max_total_bytes_per_request},
+        )
+    return total
 
 
 async def _store_remote_material(

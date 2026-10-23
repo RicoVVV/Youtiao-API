@@ -5,6 +5,13 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.core.channel_automation import (
+    DEFAULT_CHANNEL_AUTOMATION_CONFIG,
+    ChannelAutomationConfig,
+    parse_keyword_text,
+    parse_status_code_spec,
+    set_channel_automation_config,
+)
 from app.core.config import Settings
 from app.core.errors import AuthenticationProviderUnavailableError, ValidationError
 from app.core.secret_box import SMTP_CONFIG_PURPOSE, derive_fernet
@@ -57,6 +64,14 @@ class SystemSettingsApplicationService:
         "smtp_from_email",
         "smtp_from_name",
         "balance_alert_enabled",
+        "channel_probe_enabled",
+        "channel_probe_interval_minutes",
+        "channel_probe_timeout_seconds",
+        "channel_auto_disable_enabled",
+        "channel_auto_enable_enabled",
+        "channel_auto_disable_status_codes",
+        "channel_auto_retry_status_codes",
+        "channel_auto_disable_keywords",
     )
     _text_fields = (
         "system_name",
@@ -71,12 +86,20 @@ class SystemSettingsApplicationService:
         "smtp_username",
         "smtp_from_email",
         "smtp_from_name",
+        "channel_auto_disable_status_codes",
+        "channel_auto_retry_status_codes",
+        "channel_auto_disable_keywords",
     )
     _nullable_skip_fields = (
         "email_verification_enabled",
         "smtp_port",
         "smtp_security",
         "balance_alert_enabled",
+        "channel_probe_enabled",
+        "channel_probe_interval_minutes",
+        "channel_probe_timeout_seconds",
+        "channel_auto_disable_enabled",
+        "channel_auto_enable_enabled",
     )
 
     def __init__(self, session: Session, settings: Settings) -> None:
@@ -88,7 +111,9 @@ class SystemSettingsApplicationService:
         return self._public_projection(self._get_or_create_default())
 
     def get_admin_settings(self) -> dict[str, Any]:
-        return self._admin_projection(self._get_or_create_default())
+        setting = self._get_or_create_default()
+        set_channel_automation_config(self._channel_automation_config(setting))
+        return self._admin_projection(setting)
 
     def update_admin_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """更新系统设置；SMTP 密码按哨兵保留、空串清空、非空加密替换，开启邮箱验证时校验发信配置完整。"""
@@ -119,6 +144,7 @@ class SystemSettingsApplicationService:
             except Exception:
                 self._session.rollback()
                 raise
+            set_channel_automation_config(self._channel_automation_config(setting))
         return self._admin_projection(setting)
 
     def get_sidebar_modules(self) -> dict[str, Any]:
@@ -192,6 +218,43 @@ class SystemSettingsApplicationService:
             "system_name": setting.system_name or DEFAULT_SYSTEM_NAME,
             "server_url": setting.server_url,
         }
+
+    def read_channel_automation_config(self) -> ChannelAutomationConfig:
+        """只读返回渠道自动化配置；配置行缺失时使用默认值，不写库。"""
+
+        return self._channel_automation_config(self._crud.get())
+
+    def refresh_channel_automation_config(self) -> ChannelAutomationConfig:
+        """重新读取并刷新进程内缓存，供后台任务与请求失败链路使用。"""
+
+        config = self.read_channel_automation_config()
+        set_channel_automation_config(config)
+        return config
+
+    @staticmethod
+    def _channel_automation_config(setting: SystemSetting | None) -> ChannelAutomationConfig:
+        """把持久化配置转换为运行期值对象；单个字段格式异常时回退默认值，避免影响请求链路。"""
+
+        if setting is None:
+            return DEFAULT_CHANNEL_AUTOMATION_CONFIG
+        try:
+            disable_codes = parse_status_code_spec(setting.channel_auto_disable_status_codes or "")
+        except ValueError:
+            disable_codes = DEFAULT_CHANNEL_AUTOMATION_CONFIG.auto_disable_status_codes
+        try:
+            retry_codes = parse_status_code_spec(setting.channel_auto_retry_status_codes or "")
+        except ValueError:
+            retry_codes = DEFAULT_CHANNEL_AUTOMATION_CONFIG.auto_retry_status_codes
+        return ChannelAutomationConfig(
+            probe_enabled=setting.channel_probe_enabled,
+            probe_interval_seconds=max(1, setting.channel_probe_interval_minutes or 1) * 60,
+            probe_timeout_seconds=max(1, setting.channel_probe_timeout_seconds or 1),
+            auto_disable_enabled=setting.channel_auto_disable_enabled,
+            auto_enable_enabled=setting.channel_auto_enable_enabled,
+            auto_disable_status_codes=disable_codes,
+            auto_retry_status_codes=retry_codes,
+            auto_disable_keywords=parse_keyword_text(setting.channel_auto_disable_keywords or ""),
+        )
 
     def _get_or_create_default(self) -> SystemSetting:
         setting = self._crud.get()

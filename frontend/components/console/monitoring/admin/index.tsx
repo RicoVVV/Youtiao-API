@@ -11,8 +11,9 @@ import { AdminGroupsTab } from "./groups-tab";
 import { AdminNotificationTab } from "./notification-tab";
 import { AdminRulesTab } from "./rules-tab";
 import { AdminServerTab } from "./server-tab";
+import { AdminVisibilityTab } from "./visibility-tab";
 
-const TABS = ["groups", "channels", "server", "alerts", "rules", "notification"] as const;
+const TABS = ["groups", "channels", "server", "alerts", "rules", "notification", "settings"] as const;
 type TabKey = (typeof TABS)[number];
 
 /** 管理侧监控告警：分组/渠道指标 + 服务器资源 + 告警记录 + 阈值规则 + 钉钉推送配置 */
@@ -55,6 +56,7 @@ export function AdminMonitoringPanel() {
       {tab === "alerts" && <AdminAlertsTab />}
       {tab === "rules" && <AdminRulesTab />}
       {tab === "notification" && <AdminNotificationTab />}
+      {tab === "settings" && <AdminVisibilityTab />}
     </div>
   );
 }

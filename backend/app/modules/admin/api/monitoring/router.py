@@ -16,9 +16,11 @@ from app.modules.admin.api.monitoring.schemas import (
     AdminChannelMonitorQuery,
     AdminGroupMonitorListQuery,
     AdminGroupMonitorTrendQuery,
+    AdminMonitorModeUpdateRequest,
     AdminNotificationUpdateRequest,
     AdminResourceRuleUpdateRequest,
     AdminServerMetricTrendQuery,
+    AdminUserVisibilityUpdateRequest,
     AlertScopeValue,
 )
 from app.modules.monitoring.application.alerting import MonitorAlertApplicationService
@@ -26,12 +28,31 @@ from app.modules.monitoring.application.query_services import GroupMonitorQueryA
 from app.modules.monitoring.application.resource_settings import MonitorResourceSettingsApplicationService
 from app.modules.monitoring.application.server_query_services import ServerMetricQueryApplicationService
 from app.modules.monitoring.application.settings import MonitorSettingsApplicationService
+from app.modules.monitoring.application.traffic_settings import MonitorTrafficSettingsApplicationService
+from app.modules.monitoring.application.visibility_settings import MonitorUserVisibilityApplicationService
 from app.modules.monitoring.model import MonitorAlertStatus
 
 router = APIRouter(prefix="/monitoring", tags=["管理员分组监控"])
 
 SERVER_TAGS = ["管理员服务器监控"]
 """服务器资源监控接口的 OpenAPI 标签，便于前端按运维/业务分栏渲染。"""
+
+
+@router.get("/mode/detail", summary="查询分组监控数据模式")
+def get_monitor_mode(
+    _: Annotated[UUID, Depends(get_admin_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return MonitorTrafficSettingsApplicationService(session).view()
+
+
+@router.post("/mode/update", summary="切换分组监控数据模式")
+def update_monitor_mode(
+    payload: AdminMonitorModeUpdateRequest,
+    _: Annotated[UUID, Depends(get_admin_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return MonitorTrafficSettingsApplicationService(session).update(payload.model_dump())
 
 
 @router.get("/groups/list", summary="查询全部分组监控指标")
@@ -92,6 +113,23 @@ def update_alert_status(
     return MonitorAlertApplicationService(session).mark_status(
         alert_id=payload.alert_id, status=MonitorAlertStatus(payload.status)
     )
+
+
+@router.get("/user-visibility/detail", summary="查询用户侧监控可见范围")
+def get_user_visibility(
+    _: Annotated[UUID, Depends(get_admin_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return MonitorUserVisibilityApplicationService(session).view()
+
+
+@router.post("/user-visibility/update", summary="更新用户侧监控可见范围")
+def update_user_visibility(
+    payload: AdminUserVisibilityUpdateRequest,
+    _: Annotated[UUID, Depends(get_admin_user_id)],
+    session: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return MonitorUserVisibilityApplicationService(session).update(payload.model_dump())
 
 
 @router.get("/alert-rules/list", summary="查询分组监控告警规则")

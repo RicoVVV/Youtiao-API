@@ -20,12 +20,23 @@ MESSAGES_EN: dict[str, str] = {
     "SMTP 加密方式必须是 none、starttls 或 ssl": "SMTP security must be none, starttls, or ssl",
     "SMTP 密码密文无法解密": "The stored SMTP password cannot be decrypted",
     "SMTP 端口必须在 1 到 65535 之间": "SMTP port must be between 1 and 65535",
+    "状态码必须是 100-599 之间的单个状态码或起止范围，使用逗号分隔": (
+        "Status codes must be single codes or ranges between 100 and 599, separated by commas"
+    ),
     "开启邮箱验证前必须配置 SMTP 服务器地址": "An SMTP host must be configured before enabling email verification",
     "开启邮箱验证前必须配置 SMTP 用户名": ("An SMTP username must be configured before enabling email verification"),
     "开启邮箱验证前必须配置 SMTP 密码": ("An SMTP password must be configured before enabling email verification"),
     "开启邮箱验证前必须配置有效的发件人邮箱": (
         "A valid sender email must be configured before enabling email verification"
     ),
+    "开启可见范围限制时至少选择一个分组": "Select at least one group when restricting visibility",
+    "开启可见范围限制时至少选择一种请求类型": "Select at least one request type when restricting visibility",
+    "不支持的请求类型": "Unsupported request type",
+    "不支持的监控模式": "Unsupported monitoring mode",
+    "仅文本类型支持嗅探模式": "Only the text request type supports probe mode",
+    "嗅探周期必须是整数秒": "The probe interval must be an integer number of seconds",
+    "嗅探周期必须在 30 到 3600 秒之间": "The probe interval must be between 30 and 3600 seconds",
+    "监控指标不存在": "Monitoring metric not found",
     "邮件发送失败，请检查 SMTP 配置": "Failed to send email. Please check the SMTP configuration.",
     "验证码服务暂不可用": "The verification code service is temporarily unavailable",
     "验证码已过期或不存在，请重新获取": "The verification code has expired or does not exist. Please request a new one.",
@@ -441,6 +452,9 @@ MESSAGES_EN: dict[str, str] = {
     "豆包 Seed 请求必须提供非空 input": "Doubao Seed requests must provide a non-empty input",
     "输入图片像素超出限制": "Input image pixels exceed the limit",
     "输入图片地址不合法": "Invalid input image URL",
+    "无法解析输入图片尺寸": "Unable to determine the input image dimensions",
+    "请求素材数量超出限制": "Too many input materials in the request",
+    "请求素材总大小超出限制": "Total input material size exceeds the limit",
     "输入素材下载失败": "Failed to download the input material",
     "输入素材下载重定向次数超出限制": ("Input material download exceeded the maximum number of redirects"),
     "输入素材下载重定向缺少目标地址": "Input material download redirect is missing a target URL",
@@ -693,6 +707,10 @@ MESSAGES_EN: dict[str, str] = {
     "当前账号未绑定邮箱，请填写接收余额预警的邮箱": (
         "The current account has no email bound; provide an email to receive balance alerts"
     ),
+    # 渠道测试与监控探测
+    "当前渠道适配器不支持该模型测试": "The current channel adapter does not support testing this model",
+    "该模型模板暂不支持渠道文本测试": "The model template does not support channel text testing yet",
+    "视频素材目录不可用": "The video material directory is unavailable",
     # 其他校验文案
     "分组价格倍率不合法": "Invalid group price multiplier",
     "开始时间不能晚于结束时间": "The start time cannot be later than the end time",
@@ -733,6 +751,8 @@ CODE_MESSAGES: dict[str, str] = {
     "billing.redemption_code_locked": "A redeemed redemption code cannot be {action}",
     "generation.image_edit_unsupported_field": "Image editing does not support the field: {name}",
     "video.material_category_unsupported": "Unsupported input material category: {category}",
+    "video.material_count_exceeded": "Too many input materials in the request (limit: {limit})",
+    "video.material_total_bytes_exceeded": ("Total input material size exceeds the limit ({limit_bytes} bytes)"),
     # 令牌分组
     "token_group.disabled": "Token group is disabled: {name}",
     # 支付

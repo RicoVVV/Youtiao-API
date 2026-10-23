@@ -13,7 +13,11 @@ from app.infrastructure.http.client import close_async_http_client
 from app.modules.channels.runtime.probe_task import ChannelHealthProbeSystemTaskRunner
 from app.modules.channels.runtime.routing_snapshot import RoutingSnapshotInvalidationSubscriber
 from app.modules.channels.runtime.sample_task import ChannelRuntimeSampleSystemTaskRunner
-from app.modules.monitoring.application.runtime import GroupMonitorSystemTaskRunner, ServerMetricSystemTaskRunner
+from app.modules.monitoring.application.runtime import (
+    GroupMonitorProbeSystemTaskRunner,
+    GroupMonitorSystemTaskRunner,
+    ServerMetricSystemTaskRunner,
+)
 from app.modules.payment.application.admin.settings import PaymentSettingsRuntimeManager
 from app.modules.system_tasks.runtime import SystemTaskRuntime
 from app.modules.usage.application.runtime import UsageStatisticsSystemTaskRunner
@@ -52,6 +56,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings.video_result_storage_dir.mkdir(parents=True, exist_ok=True)
     if not settings.video_result_storage_dir.is_dir():
         raise RuntimeError("视频成品目录不可用")
+    settings.video_material_storage_dir.mkdir(parents=True, exist_ok=True)
+    if not settings.video_material_storage_dir.is_dir():
+        raise RuntimeError("视频素材目录不可用")
     manager = PaymentSettingsRuntimeManager(get_session_factory(), settings)
     manager.load_initial()
     sync_task = asyncio.create_task(
@@ -64,6 +71,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             VideoPollSystemTaskRunner(),
             UsageStatisticsSystemTaskRunner(),
             GroupMonitorSystemTaskRunner(),
+            GroupMonitorProbeSystemTaskRunner(),
             ServerMetricSystemTaskRunner(),
             ChannelHealthProbeSystemTaskRunner(),
             ChannelRuntimeSampleSystemTaskRunner(),

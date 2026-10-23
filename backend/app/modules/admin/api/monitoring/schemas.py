@@ -19,6 +19,7 @@ AlertMetricValue = Literal[
 ]
 AlertScopeValue = Literal["group", "server"]
 RequestTypeValue = Literal["text", "image", "video"]
+MonitorModeValue = Literal["real", "probe"]
 
 MOBILE_PATTERN = re.compile(r"1[3-9]\d{9}")
 """告警推送 @ 的手机号格式，仅接受 11 位中国大陆手机号。"""
@@ -51,6 +52,45 @@ class AdminChannelMonitorQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     group_id: int | None = Field(default=None, description="可选，仅返回指定分组下的渠道指标")
+
+
+class AdminMonitorModes(BaseModel):
+    """按请求类型提交监控数据模式：文本支持 real/probe，图片与视频固定 real。"""
+
+    text: MonitorModeValue | None = Field(default=None, description="文本类型模式；不传则保持原值")
+    image: MonitorModeValue | None = Field(default=None, description="图片类型模式，仅支持 real")
+    video: MonitorModeValue | None = Field(default=None, description="视频类型模式，仅支持 real")
+
+
+class AdminMonitorModeUpdateRequest(BaseModel):
+    """按请求类型切换分组监控数据模式，并按需更新嗅探周期。
+
+    ``real`` 展示用户真实请求，``probe`` 展示平台主动向分组发送的最小文本嗅探结果。
+    模式对管理侧与用户侧同一请求类型同时生效；图片与视频只能使用 ``real``。
+    """
+
+    modes: AdminMonitorModes | None = Field(
+        default=None,
+        description="可选，按请求类型提交模式；不传则保持原值",
+    )
+    probe_interval_seconds: int | None = Field(
+        default=None,
+        ge=30,
+        le=3600,
+        description="可选，嗅探周期秒数，仅文本 probe 模式生效；不传则保持原值",
+    )
+
+
+class AdminUserVisibilityUpdateRequest(BaseModel):
+    """更新用户侧监控可见范围时提交的字段。
+
+    ``enabled`` 为 false 时不限制：用户可见其全部分组与全部请求类型，提交的两个列表会被忽略并清空。
+    为 true 时 ``group_ids`` 与 ``request_types`` 都是白名单，且都不能为空。
+    """
+
+    enabled: bool = True
+    group_ids: list[int] = Field(default_factory=list, description="允许用户看到的分组标识列表")
+    request_types: list[RequestTypeValue] = Field(default_factory=list, description="允许用户看到的请求类型列表")
 
 
 class AdminAlertListQuery(BaseModel):

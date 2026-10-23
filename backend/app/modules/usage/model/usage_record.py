@@ -10,7 +10,7 @@ from app.core.database import SQLModelBase
 
 if TYPE_CHECKING:
     from app.modules.user.model.user import User
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Uuid, func
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship
 
@@ -61,6 +61,15 @@ class UsageRecord(SQLModelBase, table=True):
     status: UsageRecordStatus = Field(
         default=UsageRecordStatus.reserved,
         sa_column=Column(Enum(UsageRecordStatus, name="usage_record_status"), nullable=False, index=True),
+    )
+    is_user_error: bool = Field(
+        default=False,
+        sa_column=Column(
+            Boolean,
+            nullable=False,
+            server_default="false",
+            comment="是否由用户请求内容或参数触发的上游错误，此类请求不进入监控统计",
+        ),
     )
     amount: Decimal = Field(sa_column=Column(Numeric(18, 6), nullable=False))
     started_at: datetime | None = Field(

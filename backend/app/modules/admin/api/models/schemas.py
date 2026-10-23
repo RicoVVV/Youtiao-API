@@ -126,9 +126,11 @@ class ModelBatchCreateItemRequest(BaseModel):
 
 
 class ModelBatchCreateRequest(BaseModel):
-    """批量创建模型；不接收令牌分组，默认定价播种到系统默认分组。"""
+    """批量创建模型；可按令牌分组播种默认定价，未指定时使用系统默认分组。"""
 
     provider_id: str | None = Field(default=None, min_length=1, max_length=64)
+    token_group_ids: list[Annotated[int, Field(gt=0)]] | None = Field(default=None, max_length=50)
+    """播种默认定价规则的目标令牌分组；留空或空数组表示系统默认分组。"""
     items: list[ModelBatchCreateItemRequest] = Field(min_length=1, max_length=200)
 
 

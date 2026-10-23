@@ -15,11 +15,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# 视频与音频素材的流信息、时长计量依赖 ffprobe，slim 基础镜像默认不含 ffmpeg。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system app && adduser --system --ingroup app app
 
 # 仅复制依赖声明，业务代码变更不会触发依赖重装。
+# 此时业务包尚未复制，pip 只安装依赖，并清理构建遗留的 build 与 egg-info。
 COPY backend/pyproject.toml ./
-RUN --mount=type=cache,target=/root/.cache/pip pip install .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install . \
+    && rm -rf build ./*.egg-info
 
 COPY backend/alembic ./alembic
 COPY backend/app ./app
@@ -33,4 +41,4 @@ USER app
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "8", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-"]
+CMD ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-"]

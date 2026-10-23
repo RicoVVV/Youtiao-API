@@ -1,8 +1,10 @@
 import asyncio
+import logging
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError, error_context
 from app.modules.channels.application.concurrency import release_task_concurrency
+from app.modules.channels.application.failures import is_channel_failure
+from app.modules.channels.application.lifecycle import auto_disable_channel_if_needed
 from app.modules.channels.crud.channels import ChannelCrud
+from app.modules.channels.runtime.channel_runtime import get_channel_runtime
 from app.modules.providers.contracts import CreateVideoCommand, ProviderError, ProviderTaskStatus
 from app.modules.usage.application.services import UsageApplicationService
 from app.modules.video.application.contracts import VideoContentSource
@@ -40,6 +45,8 @@ _ONDEMAND_REFRESH_STATUSES = frozenset({VideoTaskStatus.queued, VideoTaskStatus.
 
 _ONDEMAND_QUERY_TIMEOUT_SECONDS = 10.0
 """读请求内补查上游状态的等待上限，超时即按本地快照返回，避免读接口被上游阻塞。"""
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncVideoApplicationService:
@@ -261,14 +268,51 @@ class AsyncVideoApplicationService:
 
     async def _submit(self, task_id: UUID) -> None:
         async with self._session_factory() as session:
-            provider, command = await session.run_sync(self._load_submission, task_id)
+            provider, command, runtime_context = await session.run_sync(self._load_submission, task_id)
+        started_at_counter = perf_counter()
         try:
             submission = await provider.submit(command)
         except ProviderError as exc:
             await self._record_submission_error(task_id, exc)
+            if is_channel_failure(exc):
+                await self._record_runtime_outcome(
+                    runtime_context, success=False, latency_ms=round((perf_counter() - started_at_counter) * 1000)
+                )
+            if runtime_context is not None:
+                await self._auto_disable_channel(runtime_context[1], exc)
             return
+        latency_ms = round((perf_counter() - started_at_counter) * 1000)
         async with self._session_factory() as session:
-            await session.run_sync(self._record_submission, task_id, submission)
+            applied = await session.run_sync(self._record_submission, task_id, submission)
+        if applied:
+            await self._record_runtime_outcome(runtime_context, success=True, latency_ms=latency_ms)
+
+    @staticmethod
+    async def _record_runtime_outcome(context, *, success: bool, latency_ms: int) -> None:
+        """把视频提交阶段的结果写入渠道运行时；失败只记录日志。"""
+
+        if context is None or not get_settings().routing_runtime_enabled:
+            return
+        route_id, channel_id, base_weight = context
+        try:
+            await asyncio.to_thread(
+                get_channel_runtime().record_outcome,
+                route_id=route_id,
+                channel_id=channel_id,
+                base_weight=base_weight,
+                success=success,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            logger.warning("视频渠道运行时反馈写入失败 route_id=%s", route_id, exc_info=True)
+
+    async def _auto_disable_channel(self, channel_id: UUID, error: ProviderError) -> None:
+        """视频提交失败命中管理员配置时自动禁用渠道；异常不影响任务状态。"""
+
+        try:
+            await auto_disable_channel_if_needed(self._session_factory, channel_id=channel_id, error=error)
+        except Exception:
+            logger.warning("视频渠道自动禁用失败 channel_id=%s", channel_id, exc_info=True)
 
     @staticmethod
     def _load_provider(sync_session, task_id: UUID):
@@ -282,19 +326,21 @@ class AsyncVideoApplicationService:
         task = VideoTaskCrud(sync_session).get(task_id=task_id)
         if task is None:
             raise NotFoundError("视频任务不存在")
-        return _get_frozen_channel_provider(sync_session, task=task), CreateVideoCommand(
-            str(task.id), task.execution_snapshot["provider_request"]
+        return (
+            _get_frozen_channel_provider(sync_session, task=task),
+            CreateVideoCommand(str(task.id), task.execution_snapshot["provider_request"]),
+            _submission_runtime_context(task),
         )
 
     @staticmethod
-    def _record_submission(sync_session, task_id: UUID, submission) -> None:
+    def _record_submission(sync_session, task_id: UUID, submission) -> bool:
         """写入提交结果；同步 Provider 已出成品时在同一事务内直接结算，无需等待轮询。"""
 
         try:
             task = VideoTaskCrud(sync_session).get_for_update(task_id=task_id)
             if task is None or task.status != VideoTaskStatus.submitting:
                 sync_session.rollback()
-                return
+                return False
             task.upstream_task_id = submission.upstream_task_id
             task.submission_response = submission.raw
             task.submitted_at = datetime.now(UTC)
@@ -324,6 +370,7 @@ class AsyncVideoApplicationService:
                 upstream_response_payload=submission.raw,
             )
             sync_session.commit()
+            return True
         except Exception:
             sync_session.rollback()
             raise
@@ -352,6 +399,7 @@ class AsyncVideoApplicationService:
                 error_code=error_code,
                 error_message=error_message,
                 upstream_response_payload=exc.response_body,
+                is_user_error=exc.is_user_error,
             )
             sync_session.commit()
         except Exception:
@@ -753,3 +801,21 @@ class AsyncVideoApplicationService:
         except Exception:
             sync_session.rollback()
             raise
+
+
+def _submission_runtime_context(task: VideoTask) -> tuple[UUID, UUID, int] | None:
+    """从任务冻结快照中取出渠道运行时反馈所需的路由、渠道与初始权重。"""
+
+    snapshot = task.execution_snapshot if isinstance(task.execution_snapshot, dict) else {}
+    route = snapshot.get("route")
+    channel = snapshot.get("channel")
+    if not isinstance(route, dict) or not isinstance(channel, dict):
+        return None
+    try:
+        return (
+            UUID(str(route["id"])),
+            UUID(str(channel["channel_id"])),
+            int(channel.get("weight") or 1),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None

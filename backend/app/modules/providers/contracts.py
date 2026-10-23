@@ -18,8 +18,23 @@ __all__ = [
     "ProviderTaskStatus",
     "ProviderProtocolOperation",
     "ProviderUpload",
+    "USER_ERROR_STATUS_CODES",
     "VideoProvider",
+    "is_user_error_status",
 ]
+
+USER_ERROR_STATUS_CODES = frozenset({400, 406, 413, 414, 415, 422})
+"""明确由客户端请求内容或参数触发的上游状态码。
+
+这些状态码表示请求本身不合法，而不是渠道或平台故障：既不计入渠道健康度，也不进入监控统计。
+401/402/403/408/429 等属于凭据、余额、限流或超时问题，仍按渠道故障处理。
+"""
+
+
+def is_user_error_status(status_code: int | None) -> bool:
+    """判断上游状态码是否属于用户请求错误。"""
+
+    return status_code is not None and status_code in USER_ERROR_STATUS_CODES
 
 
 class ProviderError(Exception):
@@ -30,11 +45,19 @@ class ProviderError(Exception):
         code: str,
         retryable: bool = False,
         response_body: dict[str, Any] | None = None,
+        status_code: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.response_body = response_body
+        self.status_code = status_code
+
+    @property
+    def is_user_error(self) -> bool:
+        """本次上游异常是否由用户请求内容或参数导致。"""
+
+        return is_user_error_status(self.status_code)
 
 
 class ProviderTaskStatus(str, Enum):

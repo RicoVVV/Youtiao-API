@@ -53,6 +53,22 @@ export type AdminSystemSettings = SystemSettings & {
   smtp_from_name: string;
   /** 余额预警总开关；开启后用户可自行设置阈值 */
   balance_alert_enabled: boolean;
+  /** 是否定时测试所有渠道 */
+  channel_probe_enabled: boolean;
+  /** 定时测试间隔分钟数，1–1440 */
+  channel_probe_interval_minutes: number;
+  /** 单次测试最长响应秒数，1–600 */
+  channel_probe_timeout_seconds: number;
+  /** 失败时是否自动禁用渠道 */
+  channel_auto_disable_enabled: boolean;
+  /** 成功后是否自动启用渠道 */
+  channel_auto_enable_enabled: boolean;
+  /** 触发自动禁用的上游状态码（单码/范围，逗号分隔） */
+  channel_auto_disable_status_codes: string;
+  /** 允许自动重试的上游状态码（504/524 始终不重试） */
+  channel_auto_retry_status_codes: string;
+  /** 触发自动禁用的错误关键词，换行分隔，不区分大小写 */
+  channel_auto_disable_keywords: string;
 };
 
 /** 站点品牌字段全量更新请求体：除 logo_url 外均不可为 null */
@@ -89,6 +105,23 @@ export type BalanceAlertUpdatePayload = {
   balance_alert_enabled: boolean;
 };
 
+/** 渠道探测与自动禁用更新请求体（差异提交，仅传变更字段） */
+export type ChannelAutomationUpdatePayload = {
+  channel_probe_enabled: boolean;
+  /** 1–1440 */
+  channel_probe_interval_minutes: number;
+  /** 1–600 */
+  channel_probe_timeout_seconds: number;
+  channel_auto_disable_enabled: boolean;
+  channel_auto_enable_enabled: boolean;
+  /** 单码 401 或范围 400-499，逗号分隔，100–599；空串不匹配任何状态码 */
+  channel_auto_disable_status_codes: string;
+  /** 语法同上；504/524 始终不参与自动重试 */
+  channel_auto_retry_status_codes: string;
+  /** 换行分隔，匹配上游错误消息文本，不区分大小写 */
+  channel_auto_disable_keywords: string;
+};
+
 /** 公开读取系统设置（无需登录） */
 export function getPublicSystemSettings() {
   return get<SystemSettings>("/system-settings/detail");
@@ -102,7 +135,10 @@ export function getAdminSystemSettings() {
 /** 管理员更新系统设置（差异提交，仅传变更字段），返回后端规范化后的完整对象 */
 export function updateAdminSystemSettings(
   payload: Partial<
-    SystemSettingsUpdatePayload & EmailVerificationUpdatePayload & BalanceAlertUpdatePayload
+    SystemSettingsUpdatePayload &
+      EmailVerificationUpdatePayload &
+      BalanceAlertUpdatePayload &
+      ChannelAutomationUpdatePayload
   >
 ) {
   return post<AdminSystemSettings>("/admin/system-settings/update", payload);

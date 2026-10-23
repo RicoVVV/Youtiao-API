@@ -75,10 +75,6 @@ class Settings(BaseSettings):
     """熔断冷却秒数，到期后进入半开。"""
     routing_circuit_probe_lease_seconds: int = Field(default=30, ge=1)
     """半开状态单个业务请求的探测租约秒数。"""
-    routing_probe_interval_seconds: int = Field(default=60, ge=5)
-    """启用渠道的短请求探测间隔秒数。"""
-    routing_probe_timeout_seconds: int = Field(default=5, ge=1)
-    """短请求探测单次超时秒数。"""
     routing_probe_failure_threshold: int = Field(default=3, ge=1)
     """探测连续失败达到该轮数后自动停用渠道。"""
     routing_probe_recovery_threshold: int = Field(default=3, ge=1)
@@ -106,11 +102,20 @@ class Settings(BaseSettings):
     video_material_download_timeout_seconds: int = Field(default=30, ge=1)
     """单个输入素材下载连接与读取的超时秒数。"""
 
+    video_material_probe_timeout_seconds: int = Field(default=60, ge=1)
+    """单个输入素材执行 ffprobe 媒体解析的超时秒数，与网络下载超时相互独立。"""
+
     video_material_max_redirects: int = Field(default=3, ge=0, le=10)
     """输入素材下载允许的最大重定向次数，每次重定向都会重新校验目标地址。"""
 
     video_material_max_bytes: int = Field(default=209715200, ge=1)
     """单个输入素材允许的最大字节数，超过后立即中断下载并拒绝请求。"""
+
+    video_material_max_count_per_request: int = Field(default=16, ge=1, le=100)
+    """单个请求允许提交的素材总数上限，远程 URL 与上传文件合并计算。"""
+
+    video_material_max_total_bytes_per_request: int = Field(default=536870912, ge=1)
+    """单个请求全部素材的字节总量上限，用于阻断批量大文件占满磁盘。"""
 
     video_material_max_video_seconds: int = Field(default=1200, ge=1)
     """单个输入视频允许的最大实测时长秒数。"""

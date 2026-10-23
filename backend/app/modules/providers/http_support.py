@@ -13,7 +13,8 @@ from typing import Any
 
 import httpx
 
-from app.modules.providers.contracts import ProviderError
+from app.core.channel_automation import ALWAYS_NON_RETRYABLE_STATUS_CODES, get_channel_automation_config
+from app.modules.providers.contracts import ProviderError, is_user_error_status
 
 logger = logging.getLogger(__name__)
 
@@ -264,30 +265,36 @@ def _error_message(payload: dict[str, Any], fallback: str) -> str:
 
 
 def provider_error_from_response(response: httpx.Response) -> ProviderError:
-    """把上游业务错误响应映射为不可重试的 ``ProviderError``。"""
+    """把上游错误响应映射为 ``ProviderError``，重试能力由管理员配置的状态码范围决定。"""
 
     payload = response_payload(response)
     error = payload.get("error") if isinstance(payload.get("error"), dict) else None
     code = error.get("code") if isinstance(error, dict) else None
-    message = _error_message(payload, "上游请求被拒绝")
+    retryable = response.status_code in get_channel_automation_config().auto_retry_status_codes
+    retryable = retryable and response.status_code not in ALWAYS_NON_RETRYABLE_STATUS_CODES
+    # 用户请求内容错误重试不会成功，还会放大上游调用量，因此始终不重试。
+    retryable = retryable and not is_user_error_status(response.status_code)
+    message = _error_message(payload, "上游服务暂不可用" if retryable else "上游请求被拒绝")
     if code == "insufficient_balance":
-        return ProviderError(message, code=code, retryable=False, response_body=payload)
-    return ProviderError(message, code=str(code or response.status_code), retryable=False, response_body=payload)
+        return ProviderError(
+            message,
+            code=code,
+            retryable=False,
+            response_body=payload,
+            status_code=response.status_code,
+        )
+    return ProviderError(
+        message,
+        code=str(code or response.status_code),
+        retryable=retryable,
+        response_body=payload,
+        status_code=response.status_code,
+    )
 
 
 def provider_error_from_status(response: httpx.Response) -> ProviderError | None:
-    """按 HTTP 状态映射可重试或业务错误；成功状态返回 ``None``。"""
+    """按 HTTP 状态映射错误；成功状态返回 ``None``。"""
 
-    if response.status_code == 429 or response.status_code >= 500:
-        payload = response_payload(response)
-        error = payload.get("error") if isinstance(payload.get("error"), dict) else None
-        code = error.get("code") if isinstance(error, dict) else None
-        return ProviderError(
-            _error_message(payload, "上游服务暂不可用"),
-            code=str(code or response.status_code),
-            retryable=True,
-            response_body=payload,
-        )
     if response.is_error:
         return provider_error_from_response(response)
     return None

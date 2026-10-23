@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter, field_validator
 
+from app.core.channel_automation import parse_status_code_spec
 from app.modules.system_settings.application.services import KEEP_PASSWORD_SENTINEL
 
 
@@ -37,6 +38,14 @@ class AdminSystemSettingsResponse(BaseModel):
     smtp_from_email: str
     smtp_from_name: str
     balance_alert_enabled: bool
+    channel_probe_enabled: bool
+    channel_probe_interval_minutes: int
+    channel_probe_timeout_seconds: int
+    channel_auto_disable_enabled: bool
+    channel_auto_enable_enabled: bool
+    channel_auto_disable_status_codes: str
+    channel_auto_retry_status_codes: str
+    channel_auto_disable_keywords: str
 
 
 class SystemSettingsUpdateRequest(BaseModel):
@@ -64,6 +73,20 @@ class SystemSettingsUpdateRequest(BaseModel):
     balance_alert_enabled: bool | None = Field(
         default=None, description="开启后按用户设置的阈值发送余额提醒邮件，必须同时开启邮箱注册验证"
     )
+    channel_probe_enabled: bool | None = Field(default=None, description="是否定时探测所有渠道")
+    channel_probe_interval_minutes: int | None = Field(default=None, ge=1, le=1440, description="探测间隔分钟数")
+    channel_probe_timeout_seconds: int | None = Field(default=None, ge=1, le=600, description="单次探测最长响应秒数")
+    channel_auto_disable_enabled: bool | None = Field(default=None, description="失败时是否自动禁用渠道")
+    channel_auto_enable_enabled: bool | None = Field(default=None, description="成功后是否自动启用渠道")
+    channel_auto_disable_status_codes: str | None = Field(
+        default=None, max_length=2048, description="触发自动禁用的状态码，逗号分隔，支持起止范围"
+    )
+    channel_auto_retry_status_codes: str | None = Field(
+        default=None, max_length=2048, description="允许自动重试的状态码，逗号分隔，支持起止范围；504 与 524 始终不重试"
+    )
+    channel_auto_disable_keywords: str | None = Field(
+        default=None, max_length=8192, description="触发自动禁用的错误关键词，换行分隔，不区分大小写"
+    )
 
     @field_validator("server_url", "logo_url", mode="before")
     @classmethod
@@ -71,6 +94,17 @@ class SystemSettingsUpdateRequest(BaseModel):
         if value is None or not str(value).strip():
             return ""
         return str(TypeAdapter(AnyHttpUrl).validate_python(value))
+
+    @field_validator("channel_auto_disable_status_codes", "channel_auto_retry_status_codes")
+    @classmethod
+    def validate_status_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parse_status_code_spec(value)
+        except ValueError as exc:
+            raise ValueError("状态码必须是 100-599 之间的单个状态码或起止范围，使用逗号分隔") from exc
+        return value.strip()
 
 
 class SidebarModulesResponse(BaseModel):

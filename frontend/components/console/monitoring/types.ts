@@ -6,6 +6,10 @@
  */
 
 export type RequestType = "text" | "image" | "video";
+/** 监控数据模式：真实用户流量 / 平台文本嗅探（仅 text 支持 probe） */
+export type MonitorMode = "real" | "probe";
+/** 按请求类型的数据模式；image / video 恒为 real，仅 text 可切换 */
+export type MonitorModes = Record<RequestType, MonitorMode>;
 export type MetricKey =
   | "success_rate"
   | "average_duration_ms"
@@ -41,6 +45,10 @@ export type GroupListResponse = {
   window_minutes: number;
   latest_window_start: string | null;
   range_start: string;
+  /** 各请求类型的数据模式；image / video 恒为 real，仅 text 可切换 */
+  modes: MonitorModes;
+  /** 当前调用方可见的请求类型 */
+  request_types: RequestType[];
   items: GroupMetricItem[];
 };
 
@@ -53,11 +61,26 @@ export type TrendSeries = {
   values: (number | null)[];
 };
 
+/** 整段查询区间的汇总（口径与所选 hours 一致），供卡片头部展示 */
+export type TrendSummary = {
+  request_type: RequestType;
+  sample_count: number;
+  success_rate: number | null;
+  average_duration_ms: number | null;
+  average_first_token_ms: number | null;
+};
+
 export type TrendResponse = {
   group_id: number;
   group_name: string;
   window_minutes: number;
+  /** 各请求类型的数据模式；image / video 恒为 real，仅 text 可切换 */
+  modes: MonitorModes;
+  /** 当前调用方可见的请求类型 */
+  request_types: RequestType[];
   x_axis: string[];
+  /** 与 x_axis 同区间的逐类型汇总；无请求的类型 sample_count 为 0、指标为 null */
+  summaries: TrendSummary[];
   series: TrendSeries[];
 };
 
@@ -80,7 +103,33 @@ export type ChannelMetricItem = {
 export type ChannelListResponse = {
   window_start: string | null;
   window_minutes: number;
+  /** 各请求类型的数据模式；image / video 恒为 real，仅 text 可切换 */
+  modes: MonitorModes;
+  /** 当前调用方可见的请求类型 */
+  request_types: RequestType[];
   items: ChannelMetricItem[];
+};
+
+/* ---------------- 用户侧可见性配置（管理侧） ---------------- */
+
+/** 令牌分组及其支持的请求类型（由该分组启用的模型/路由/渠道推导，空数组表示不支持任何类型） */
+export type VisibilityGroup = {
+  id: number;
+  name: string;
+  is_active: boolean;
+  request_types: RequestType[];
+};
+
+export type UserVisibilityConfig = {
+  enabled: boolean;
+  /** enabled=false 时为空数组 */
+  group_ids: number[];
+  /** enabled=false 时为全部三种类型 */
+  request_types: RequestType[];
+  /** 全部分组及其支持的请求类型，用于按所选类型过滤分组选择器 */
+  groups: VisibilityGroup[];
+  /** 未配置过为 null */
+  updated_at: string | null;
 };
 
 /* ---------------- 告警记录（管理侧） ---------------- */

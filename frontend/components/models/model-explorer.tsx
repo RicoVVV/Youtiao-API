@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Check,
+  ChevronDown,
   Clapperboard,
   Code2,
   Copy,
@@ -527,15 +528,11 @@ export function ModelExplorer() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 模型广场页面隐藏页面级滚动条（保留滚动能力）
-  useEffect(() => {
-    document.documentElement.classList.add("no-page-scrollbar");
-    return () => document.documentElement.classList.remove("no-page-scrollbar");
-  }, []);
   const [keyword, setKeyword] = useState("");
   const [provider, setProvider] = useState<string>(ALL_PROVIDER);
   const [preview, setPreview] = useState<ModelInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
   const providerRowRef = useRef<HTMLDivElement>(null);
 
   // 客户端拉取模型列表（浏览器可见请求）
@@ -544,6 +541,21 @@ export function ModelExplorer() {
       .then(setModels)
       .finally(() => setLoading(false));
   }, []);
+
+  // 页面还可继续向下滚动时显示"更多模型"提示箭头
+  useEffect(() => {
+    const update = () => {
+      const doc = document.documentElement;
+      setCanScrollDown(doc.scrollHeight - (window.scrollY + window.innerHeight) > 8);
+    };
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [loading, models.length, keyword, provider]);
 
   const openDetail = async (model: ModelInfo) => {
     setDetailLoading(true);
@@ -713,27 +725,34 @@ export function ModelExplorer() {
                       {model.providerName}
                     </Badge>
                   )}
-                  <span className="absolute bottom-3 left-3 font-mono text-xs text-white/85">
-                    {model.name}
-                  </span>
                   <span className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 p-2.5 text-white opacity-0 shadow-lg backdrop-blur-sm transition-all duration-300 group-hover:opacity-100">
                     <ZoomIn className="size-5" aria-label={t("price.zoomAlt")} />
                   </span>
-                  <span className="absolute bottom-3 right-3 flex flex-col items-end gap-0.5 font-mono text-xs text-white/85">
-                    {price.input && price.output ? (
-                      <>
-                        <span>{t("price.input")} {price.input}</span>
-                        {price.cached && <span>{t("price.cached")} {price.cached}</span>}
-                        <span>{t("price.output")} {price.output}</span>
-                        <span className="text-[10px] text-white/70">{price.unit}</span>
-                      </>
-                    ) : (
-                      <span className="flex items-center gap-1">
-                        {price.value}
-                        <span className="text-[10px] text-white/70">{price.unit}</span>
-                      </span>
-                    )}
-                  </span>
+                  
+                  {/* 底部信息栏：模型名称 + 计费信息 */}
+                  <div className="absolute inset-x-3 bottom-3 flex items-end justify-between gap-4">
+                    <span 
+                      className="min-w-0 flex-1 truncate font-mono text-xs text-white/85" 
+                      title={model.name}
+                    >
+                      {model.name}
+                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono text-xs text-white/85">
+                      {price.input && price.output ? (
+                        <>
+                          <span>{t("price.input")} {price.input}</span>
+                          {price.cached && <span>{t("price.cached")} {price.cached}</span>}
+                          <span>{t("price.output")} {price.output}</span>
+                          <span className="text-[10px] text-white/70">{price.unit}</span>
+                        </>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          {price.value}
+                          <span className="text-[10px] text-white/70">{price.unit}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 {/* 信息区 */}
@@ -782,6 +801,21 @@ export function ModelExplorer() {
 
       {/* 详情弹窗 */}
       {preview && <ModelDetailModal model={preview} onClose={() => setPreview(null)} />}
+
+      {/* 下方还有更多模型时的悬浮滚动提示箭头，滚到底部自动隐藏 */}
+      {canScrollDown && (
+        <button
+          type="button"
+          aria-label={t("scroll.more")}
+          onClick={() =>
+            window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" })
+          }
+          className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border border-border/60 bg-background/85 px-4 py-2 text-xs text-muted-foreground shadow-lg backdrop-blur-sm transition-colors hover:border-primary/50 hover:text-foreground"
+        >
+          {t("scroll.more")}
+          <ChevronDown className="size-4 animate-bounce" />
+        </button>
+      )}
     </div>
   );
 }

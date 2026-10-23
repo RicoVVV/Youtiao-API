@@ -48,6 +48,33 @@ class ChannelCrud:
             )
         )
 
+    def list_group_model_types(self, *, group_ids: list[int]) -> dict[int, list[str]]:
+        """按分组列出当前配置支持的模型类型。
+
+        只按启用模型、启用路由与启用渠道判断，不看健康状态：渠道暂时不健康时
+        分组仍应出现在监控页，否则故障会被隐藏。
+        """
+
+        if not group_ids:
+            return {}
+        rows = self._session.execute(
+            select(ModelRoute.token_group_id, Model.model_type)
+            .join(Model, Model.id == ModelRoute.model_id)
+            .join(Channel, Channel.id == ModelRoute.channel_id)
+            .where(
+                ModelRoute.token_group_id.in_(group_ids),
+                ModelRoute.enabled.is_(True),
+                Model.active.is_(True),
+                Channel.active.is_(True),
+            )
+            .distinct()
+        ).all()
+        types_by_group: dict[int, set[str]] = {}
+        for group_id, model_type in rows:
+            if isinstance(model_type, str):
+                types_by_group.setdefault(int(group_id), set()).add(model_type)
+        return {group_id: sorted(types) for group_id, types in types_by_group.items()}
+
     def list_channels_for_model(self, *, model_id: UUID, group_ids: list[int]) -> list[tuple[ModelRoute, Channel]]:
         if not group_ids:
             return []

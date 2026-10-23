@@ -22,10 +22,13 @@ from app.modules.message.model import (
 from app.modules.models.model import Model, ModelRoute
 from app.modules.monitoring.model import (
     GroupMetricSnapshot,
+    GroupProbeResult,
     MonitorAlert,
     MonitorAlertRule,
     MonitorNotification,
     MonitorResourceRule,
+    MonitorTrafficSetting,
+    MonitorUserVisibility,
     ServerMetricSnapshot,
 )
 from app.modules.payment.model import PaymentOption
@@ -78,10 +81,13 @@ __all__ = [
     "PaymentOption",
     "SystemSetting",
     "GroupMetricSnapshot",
+    "GroupProbeResult",
     "MonitorAlert",
     "MonitorAlertRule",
     "MonitorNotification",
     "MonitorResourceRule",
+    "MonitorTrafficSetting",
+    "MonitorUserVisibility",
     "ServerMetricSnapshot",
     "Message",
     "MessageTarget",

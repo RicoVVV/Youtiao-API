@@ -41,6 +41,9 @@
     "noModels": "暂无可用模型",
     "noMatch": "没有找到匹配的模型，换个关键词试试。"
   },
+  "scroll": {
+    "more": "更多模型"
+  },
   "detail": {
     "copyName": "复制模型名",
     "close": "关闭",

@@ -35,6 +35,7 @@ from app.modules.channels.application.concurrency import (
     reserve_task_concurrency,
 )
 from app.modules.channels.application.failures import is_channel_failure
+from app.modules.channels.application.lifecycle import auto_disable_channel_if_needed
 from app.modules.channels.application.model_mapping import apply_upstream_model_name
 from app.modules.channels.application.routing import select_channel_in_group_order
 from app.modules.channels.crud.channels import ChannelCrud
@@ -356,10 +357,12 @@ class _GenerationServiceBase:
         duration_ms: int | None = None,
         first_token_duration_ms: int | None = None,
         channel_failure: bool = False,
+        channel_error: ProviderError | None = None,
         record_outcome: bool = True,
     ) -> None:
         """在短事务内结算或退款，释放并发占用，并记录渠道运行时反馈。"""
 
+        is_user_error = channel_error is not None and channel_error.is_user_error
         async with self._session_factory() as session:
             await session.run_sync(
                 _finalize_sync,
@@ -371,6 +374,7 @@ class _GenerationServiceBase:
                 completed_at,
                 duration_ms,
                 first_token_duration_ms,
+                is_user_error,
             )
         if record_outcome and (success or channel_failure):
             await asyncio.to_thread(
@@ -379,6 +383,15 @@ class _GenerationServiceBase:
                 success=success,
                 latency_ms=first_token_duration_ms or duration_ms or 0,
             )
+        if channel_error is not None:
+            try:
+                await auto_disable_channel_if_needed(
+                    self._session_factory,
+                    channel_id=prepared.billing.channel_id,
+                    error=channel_error,
+                )
+            except Exception:
+                logger.warning("渠道自动禁用失败 channel_id=%s", prepared.billing.channel_id, exc_info=True)
 
     async def _finalize_cancelled(self, prepared: PreparedGeneration) -> None:
         """协程被取消时以可屏蔽取消的方式收尾，避免预占资金与并发租约悬空。"""
@@ -418,6 +431,7 @@ def _finalize_sync(
     completed_at: datetime | None = None,
     duration_ms: int | None = None,
     first_token_duration_ms: int | None = None,
+    is_user_error: bool = False,
 ) -> None:
     billing = prepared.billing
     try:
@@ -432,6 +446,7 @@ def _finalize_sync(
                 completed_at=completed_at,
                 duration_ms=duration_ms,
                 first_token_duration_ms=first_token_duration_ms,
+                is_user_error=is_user_error,
             )
         elif success:
             UsageApplicationService(sync_session).settle_resource(
@@ -446,6 +461,7 @@ def _finalize_sync(
                 resource_id=billing.resource_id,
                 reason="同步生成调用失败退款",
                 upstream_response_payload=upstream_payload,
+                is_user_error=is_user_error,
             )
         release_task_concurrency(sync_session, task_id=billing.resource_id)
         sync_session.commit()
@@ -465,6 +481,7 @@ def _finalize_postpaid(
     completed_at: datetime | None = None,
     duration_ms: int | None = None,
     first_token_duration_ms: int | None = None,
+    is_user_error: bool = False,
 ) -> None:
     """按上游实际用量后付费扣费；失败时记录零金额调用。"""
 
@@ -496,6 +513,7 @@ def _finalize_postpaid(
             completed_at=completed_at,
             duration_ms=duration_ms,
             first_token_duration_ms=first_token_duration_ms,
+            is_user_error=is_user_error,
         )
         return
     if usage is None and not image_token_billing:
@@ -807,6 +825,7 @@ class ImageGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "图片") from exc
         await self._finalize(
@@ -868,6 +887,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "文本") from exc
         usage = _response_usage(result)
@@ -918,6 +938,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
@@ -960,6 +981,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
@@ -997,6 +1019,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "文本") from exc
         usage = _response_usage(result)
@@ -1047,6 +1070,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                 upstream_payload=exc.response_body,
                 duration_ms=_duration_ms(started_at_counter),
                 channel_failure=is_channel_failure(exc),
+                channel_error=exc,
             )
             raise _provider_application_error(exc, "文本") from exc
         return self._relay_stream(prepared, stream, started_at, started_at_counter), content_type
@@ -1103,6 +1127,7 @@ class TextGenerationApplicationService(_GenerationServiceBase):
                             duration_ms=_duration_ms(started_at_counter),
                             first_token_duration_ms=first_token_duration_ms,
                             channel_failure=channel_failure,
+                            channel_error=stream_error if isinstance(stream_error, ProviderError) else None,
                         )
                     )
                 except Exception:

@@ -439,14 +439,16 @@ it from the selection.
 |---|---|---|
 | POST | `/api/admin/models/batch-create` | JSON body |
 
-No token group is accepted or required. Preset/manual pricing rules are seeded into the system default group, exactly
-like single creation without `token_group_ids`.
+`token_group_ids` is optional. When omitted or empty, preset/manual pricing rules are seeded into the system default
+group, exactly like single creation without `token_group_ids`. When provided, every group in the list receives its own
+copy of the seeded pricing rules.
 
 ### Request body
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `provider_id` | string | No | Common endpoint for the batch; each item may override it. |
+| `token_group_ids` | integer[] | No | Target token groups for the seeded pricing rules. Omit or send an empty array to use the system default group. Unknown or inactive groups reject the whole batch. |
 | `items` | object[] | Yes | 1–200 models. |
 | `items[].name` | string | Yes | Model name. Duplicates in one batch are rejected. |
 | `items[].provider_id` | string | No | Per-model endpoint override. |
@@ -460,6 +462,7 @@ like single creation without `token_group_ids`.
 ```json
 {
   "provider_id": "openai",
+  "token_group_ids": [1, 3],
   "items": [
     { "name": "gpt-4o" },
     { "name": "my-relay-model", "pricing_rules": [{ "name": "按 token 计费", "conditions": [], "items": [] }] }
@@ -494,8 +497,8 @@ failing model name, e.g. `模型“my-relay-model”创建失败：该模型未�
 |---|---|---|
 | POST | `/api/admin/models/create` | JSON body |
 
-Existing fields are unchanged. `token_group_ids` is optional and is **not** used by the channel flow: omit it and the
-pricing rules are seeded into the system default group. Two fields are added:
+Existing fields are unchanged. `token_group_ids` is optional: omit it and the pricing rules are seeded into the system
+default group, or pass one or more group ids to seed a pricing rule copy into each group. Two fields are added:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -574,8 +577,10 @@ pricing rules are seeded into the system default group. Two fields are added:
 2. Show the returned model names with multi-select checkboxes.
 3. Load endpoint options → B2; display the selector as **端点** and let the operator choose one (plus an optional model
    type when the endpoint supports several).
-4. Call the batch preview with the selected `model_names` + `provider_id` (+ `model_type`) → B4.
-5. Render one row per model:
+4. Load token groups from `GET /api/admin/token/groups/list`; let the operator choose the pricing seed groups
+   (`token_group_ids`, multi-select, default to the system default group).
+5. Call the batch preview with the selected `model_names` + `provider_id` (+ `model_type`) → B4.
+6. Render one row per model:
    - **Status column:** `已匹配预设价格` / `需填写价格` / `无法创建`.
    - **Price column:** when `matched` is `true`, render `pricing_summary` as label + amount + currency, e.g.
      `输入 token $2.50 / 1M` and `输出 token $10.00 / 1M`; a "详情" action can show the full `pricing_rules`.
@@ -583,9 +588,9 @@ pricing rules are seeded into the system default group. Two fields are added:
      the operator must complete `unit_amount` for every billable item.
    - When `error != null`, show the error and disable that row's checkbox.
    - Show the summary counts above the table (`preset_matched` / `requires_pricing_input` / `failed`).
-6. Click **Batch create** → B5, sending the common `provider_id` plus each row's name and (when needed) `pricing_rules`.
-   Do not ask for a token group.
-7. After success, add all created model names to the channel's `supported_models` and save the channel via
+7. Click **Batch create** → B5, sending the common `provider_id`, `token_group_ids`, plus each row's name and (when
+   needed) `pricing_rules`.
+8. After success, add all created model names to the channel's `supported_models` and save the channel via
    `POST /api/admin/channels/update` (or include them in `POST /api/admin/channels/create` for a new channel).
 
 A single model can still be created via B6 when the operator does not need batch selection.

@@ -246,12 +246,13 @@ class AdminModelConfigApplicationService:
     def batch_create_models(self, payload: dict[str, Any]) -> dict[str, object]:
         """批量创建模型；任一模型失败时整体回滚，不做部分创建。
 
-        不接收令牌分组，默认定价规则播种到系统默认分组。每个模型可覆盖公共的 ``provider_id``、
-        ``template_id``、``model_type`` 与 ``pricing_rules``。
+        可按 ``token_group_ids`` 为整批模型指定默认定价规则的播种分组，未指定时回退到系统默认分组。
+        每个模型可覆盖公共的 ``provider_id``、``template_id``、``model_type`` 与 ``pricing_rules``。
         """
 
         items = payload["items"]
         common_provider_id = payload.get("provider_id")
+        token_group_ids = payload.get("token_group_ids")
         names = [str(item["name"]).strip() for item in items]
         if any(not name for name in names):
             raise ValidationError("模型名不能为空")
@@ -271,6 +272,7 @@ class AdminModelConfigApplicationService:
                             provider_id=item.get("provider_id") or common_provider_id,
                             model_type=item.get("model_type"),
                             pricing_rules=item.get("pricing_rules"),
+                            token_group_ids=token_group_ids,
                             default_concurrency_limit=item.get("default_concurrency_limit"),
                             active=item.get("active", True),
                         )

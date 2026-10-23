@@ -14,6 +14,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.modules.admin.crud.channel_crud import ChannelCrud as AdminChannelCrud
 from app.modules.admin.crud.model_crud import ModelCrud
 from app.modules.channels.application.model_mapping import apply_upstream_model_name
+from app.modules.channels.application.probe_request import build_probe_request
 from app.modules.channels.crud.channels import ChannelCrud as ConfigurationChannelCrud
 from app.modules.models.model import Model
 from app.modules.pricing.application.engine import MaterialFacts, list_unpriced_groups, quote_pricing
@@ -22,8 +23,6 @@ from app.modules.usage.application.normalization import normalize_text_usage
 from app.modules.usage.application.services import UsageApplicationService
 from app.modules.user.crud.token_group_crud import TokenGroupCrud
 
-_TEST_CHAT_MESSAGE = "hi"
-_TEST_CHAT_MAX_TOKENS = 16
 _TEST_IMAGE_PROMPT = "a cute cat"
 _TEST_IMAGE_SIZE = "1024x1024"
 _TESTABLE_MODEL_TYPES = {"text", "image"}
@@ -38,6 +37,7 @@ class _TestTarget:
     model_type: str
     provider_name: str
     provider: GenerationProvider
+    operation: str
     request_body: dict[str, Any]
     pricing_rules: list[Any]
     pricing_items: list[Any]
@@ -56,8 +56,7 @@ class ChannelTestApplicationService:
             target = await session.run_sync(_build_test_target, channel_id, model)
         started_at = time.perf_counter()
         try:
-            response = await _call_provider(target.provider, target.model_type, target.request_body)
-            result, usage = _extract_result(target.model_type, response)
+            response = await _call_provider(target)
         except ProviderError as exc:
             return await self._finalize(
                 admin_user_id=admin_user_id,
@@ -71,6 +70,22 @@ class ChannelTestApplicationService:
                 pricing_snapshot=None,
                 result=None,
             )
+        except (ValueError, TypeError) as exc:
+            # 适配器在发往上游前拒绝请求体（如协议形状不符），属于配置问题，不能归因于上游响应。
+            return await self._finalize(
+                admin_user_id=admin_user_id,
+                target=target,
+                started_at=started_at,
+                succeeded=False,
+                amount=Decimal(0),
+                usage={},
+                error_code="invalid_provider_request",
+                message=str(exc) or "渠道测试请求不合法",
+                pricing_snapshot=None,
+                result=None,
+            )
+        try:
+            result, usage = _extract_result(target.model_type, response)
         except (ValueError, TypeError):
             return await self._finalize(
                 admin_user_id=admin_user_id,
@@ -167,7 +182,13 @@ def _build_test_target(sync_session, channel_id: UUID, model_name: str | None) -
         )
     groups = TokenGroupCrud(sync_session).list_groups_by_ids(set(channel.token_group_ids))
     group_multipliers = {group.id: group.price_multiplier for group in groups}
-    request_body = _build_test_request(model.model_type, model.name)
+    if model.model_type == "text":
+        probe = build_probe_request(template_id=template["template_id"], model_name=model.name)
+        if probe is None:
+            raise ValidationError("该模型模板暂不支持渠道文本测试")
+        request_body, operation = probe.body, probe.operation
+    else:
+        request_body, operation = _build_image_test_request(model.name), "generate_image"
     apply_upstream_model_name(request_body, channel.model_mapping.get(model.name))
     request_body.update(deepcopy(channel.param_override))
     provider = get_channel_provider_factory().get_frozen_generation_provider(
@@ -183,6 +204,7 @@ def _build_test_target(sync_session, channel_id: UUID, model_name: str | None) -
         model_type=model.model_type,
         provider_name=template["provider_type"],
         provider=provider,
+        operation=operation,
         request_body=request_body,
         pricing_rules=rules,
         pricing_items=items,
@@ -226,7 +248,7 @@ def _persist_test_result(
             channel_id=target.channel_id,
             channel_name=target.channel_name,
             provider_name=target.provider_name,
-            request_payload=_safe_request_payload(target.request_body),
+            request_payload=_safe_request_payload(target),
             response_metadata=response_metadata,
             amount=amount if succeeded else Decimal(0),
             duration_ms=duration_ms,
@@ -270,26 +292,15 @@ def _resolve_test_model(sync_session, supported_models: list[str], model_name: s
     return model
 
 
-def _build_test_request(model_type: str, model_name: str) -> dict[str, Any]:
-    if model_type == "image":
-        return {"model": model_name, "prompt": _TEST_IMAGE_PROMPT, "n": 1, "size": _TEST_IMAGE_SIZE}
-    return {
-        "model": model_name,
-        "messages": [{"role": "user", "content": _TEST_CHAT_MESSAGE}],
-        "max_tokens": _TEST_CHAT_MAX_TOKENS,
-    }
+def _build_image_test_request(model_name: str) -> dict[str, Any]:
+    return {"model": model_name, "prompt": _TEST_IMAGE_PROMPT, "n": 1, "size": _TEST_IMAGE_SIZE}
 
 
-async def _call_provider(provider: GenerationProvider, model_type: str, request_body: dict[str, Any]) -> dict[str, Any]:
-    if model_type == "image":
-        generate_image = getattr(provider, "generate_image", None)
-        if not callable(generate_image):
-            raise ProviderError("当前渠道适配器不支持图片生成测试", code="unsupported_capability", retryable=False)
-        return await generate_image(request_body, timeout=get_settings().provider_read_timeout_seconds)
-    chat = getattr(provider, "chat", None)
-    if not callable(chat):
-        raise ProviderError("当前渠道适配器不支持文本生成测试", code="unsupported_capability", retryable=False)
-    return await chat(request_body, timeout=get_settings().provider_read_timeout_seconds)
+async def _call_provider(target: _TestTarget) -> dict[str, Any]:
+    test_call = getattr(target.provider, target.operation, None)
+    if not callable(test_call):
+        raise ProviderError("当前渠道适配器不支持该模型测试", code="unsupported_capability", retryable=False)
+    return await test_call(target.request_body, timeout=get_settings().provider_read_timeout_seconds)
 
 
 def _extract_result(model_type: str, response: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int | str]]:
@@ -402,12 +413,21 @@ def _usage_token(usage: dict[str, int | str], key: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _safe_request_payload(request_body: dict[str, Any]) -> dict[str, object]:
-    payload: dict[str, object] = {"model": str(request_body.get("model", ""))}
-    if "messages" in request_body:
-        payload.update({"type": "text", "max_tokens": int(request_body.get("max_tokens", 0))})
+def _safe_request_payload(target: _TestTarget) -> dict[str, object]:
+    """按模型类型生成脱敏后的测试请求摘要，不记录各厂商原生请求字段。"""
+
+    payload: dict[str, object] = {"model": str(target.request_body.get("model", ""))}
+    if target.model_type == "text":
+        max_tokens = target.request_body.get("max_tokens")
+        payload.update({"type": "text", "max_tokens": max_tokens if isinstance(max_tokens, int) else 0})
     else:
-        payload.update({"type": "image", "n": int(request_body.get("n", 0)), "size": str(request_body.get("size", ""))})
+        payload.update(
+            {
+                "type": "image",
+                "n": int(target.request_body.get("n", 0)),
+                "size": str(target.request_body.get("size", "")),
+            }
+        )
     return payload
 
 

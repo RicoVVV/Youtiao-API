@@ -11,6 +11,9 @@ from uuid import UUID
 from sqlmodel import Session
 
 from app.core.errors import NotFoundError
+from app.modules.channels.crud.channels import ChannelCrud
+from app.modules.monitoring.application.traffic_settings import MonitorTrafficSettingsApplicationService
+from app.modules.monitoring.application.visibility_settings import MonitorUserVisibilityApplicationService
 from app.modules.monitoring.application.window import (
     WINDOW_MINUTES,
     WINDOWS_PER_DAY,
@@ -22,7 +25,13 @@ from app.modules.monitoring.application.window import (
 from app.modules.monitoring.crud.alert_crud import MonitorAlertCrud
 from app.modules.monitoring.crud.reference_crud import MonitoringReferenceCrud
 from app.modules.monitoring.crud.snapshot_crud import TRACKED_REQUEST_TYPES, SnapshotCrud
-from app.modules.monitoring.model import RESOURCE_ALERT_METRICS, MonitorAlertMetric, MonitorAlertStatus
+from app.modules.monitoring.model import (
+    MONITOR_MODE_PROBE,
+    MONITOR_MODE_REAL,
+    RESOURCE_ALERT_METRICS,
+    MonitorAlertMetric,
+    MonitorAlertStatus,
+)
 from app.modules.monitoring.model.metric_bucket import MetricBucket
 from app.modules.user.crud.token_group_crud import TokenGroupCrud
 
@@ -61,15 +70,33 @@ class GroupMonitorQueryApplicationService:
         self._snapshots = SnapshotCrud(session)
         self._alerts = MonitorAlertCrud(session)
         self._groups = TokenGroupCrud(session)
+        self._channels = ChannelCrud(session)
         self._references = MonitoringReferenceCrud(session)
+        self._traffic = MonitorTrafficSettingsApplicationService(session)
 
     def user_group_metrics(self, *, user_id: UUID, group_id: int | None) -> dict:
-        """用户侧：返回当前用户可用分组的最新窗口与近 24 小时指标。"""
+        """用户侧：返回当前用户可用、管理员允许展示且支持可见类型的指标。"""
 
-        groups = [group for group in self._groups.list_available_groups(user_id) if group_id in (None, group.id)]
+        visibility = MonitorUserVisibilityApplicationService(self._session)
+        modes = self._traffic.current_modes()
+        request_types = visibility.visible_request_types()
+        allowed_group_ids = visibility.restricted_group_ids()
+        candidates = [
+            group
+            for group in self._groups.list_available_groups(user_id)
+            if group_id in (None, group.id) and (allowed_group_ids is None or group.id in allowed_group_ids)
+        ]
+        supported = self._channels.list_group_model_types(group_ids=[group.id for group in candidates])
+        visible_types = set(request_types)
+        groups = [group for group in candidates if visible_types & set(supported.get(group.id, []))]
         if group_id is not None and not groups:
             raise NotFoundError("Token 分组不存在")
-        return {**self._window_meta(), "items": self._group_items(groups=groups, with_alert_count=False)}
+        return {
+            **self._window_meta(),
+            "modes": modes,
+            "request_types": list(request_types),
+            "items": self._group_items(groups=groups, with_alert_count=False, request_types=request_types, modes=modes),
+        }
 
     def admin_group_metrics(self, *, group_id: int | None) -> dict:
         """管理侧：返回全部分组的最新窗口与近 24 小时指标。"""
@@ -77,23 +104,49 @@ class GroupMonitorQueryApplicationService:
         groups = [group for group in self._groups.list_groups() if group_id in (None, group.id)]
         if group_id is not None and not groups:
             raise NotFoundError("Token 分组不存在")
-        return {**self._window_meta(), "items": self._group_items(groups=groups, with_alert_count=True)}
+        modes = self._traffic.current_modes()
+        request_types = TRACKED_REQUEST_TYPES
+        return {
+            **self._window_meta(),
+            "modes": modes,
+            "request_types": list(request_types),
+            "items": self._group_items(groups=groups, with_alert_count=True, request_types=request_types, modes=modes),
+        }
 
     def group_trend(self, *, group_id: int, request_type: str | None, hours: int, user_id: UUID | None = None) -> dict:
         """返回指定分组最近若干小时的 5 分钟粒度指标序列。
 
-        传入 ``user_id`` 时按用户可用分组做可见性校验，用于用户侧接口。
+        每个请求类型按自己的模式取数：文本可能来自嗅探，图片与视频始终来自真实请求。
+        传入 ``user_id`` 时按用户可用分组与管理员配置的可见范围做校验，用于用户侧接口。
         """
 
         group = self._resolve_group(group_id=group_id, user_id=user_id)
+        modes = self._traffic.current_modes()
+        if user_id is not None:
+            visibility = MonitorUserVisibilityApplicationService(self._session)
+            allowed_group_ids = visibility.restricted_group_ids()
+            if allowed_group_ids is not None and group_id not in allowed_group_ids:
+                raise NotFoundError("Token 分组不存在")
+            allowed_request_types = visibility.visible_request_types()
+            supported = set(self._channels.list_group_model_types(group_ids=[group_id]).get(group_id, []))
+            allowed_request_types = tuple(
+                current_type for current_type in allowed_request_types if current_type in supported
+            )
+            if not allowed_request_types:
+                raise NotFoundError("监控指标不存在")
+        else:
+            allowed_request_types = TRACKED_REQUEST_TYPES
+        if request_type is not None and request_type not in allowed_request_types:
+            raise NotFoundError("监控指标不存在")
+        request_types = [request_type] if request_type else list(allowed_request_types)
         newest = newest_window(datetime.now(UTC))
         windows = recent_windows(newest=newest, count=hours * WINDOWS_PER_HOUR)
         rows = self._snapshots.list_range(start_at=windows[0], end_at=windows[-1], group_ids=[group_id])
-        buckets = {(row.window_start, row.request_type): MetricBucket.from_snapshot(row) for row in rows}
-        request_types = [request_type] if request_type else list(TRACKED_REQUEST_TYPES)
+        buckets = {(row.mode, row.window_start, row.request_type): MetricBucket.from_snapshot(row) for row in rows}
         series = [
             _series_payload(
                 request_type=current_type,
+                mode=modes.get(current_type, MONITOR_MODE_REAL),
                 metric=metric,
                 unit=unit,
                 label=label,
@@ -108,15 +161,36 @@ class GroupMonitorQueryApplicationService:
             "group_id": group.id,
             "group_name": group.name,
             "window_minutes": WINDOW_MINUTES,
+            "modes": modes,
+            "request_types": request_types,
             "x_axis": [window_start.isoformat() for window_start in windows],
+            "summaries": _range_summaries(rows=rows, request_types=request_types, modes=modes),
             "series": series,
         }
 
     def channel_metrics(self, *, group_id: int | None) -> dict:
-        """管理侧运维视图：返回最新窗口的「分组 × 渠道 × 请求类型」指标。"""
+        """管理侧运维视图：返回最新窗口按各类型模式取数的渠道指标。"""
 
         newest = newest_window(datetime.now(UTC))
-        buckets = self._snapshots.aggregate_by_channel(start_at=newest, end_at=window_end(newest))
+        modes = self._traffic.current_modes()
+        real_buckets = self._snapshots.aggregate_by_channel(
+            start_at=newest, end_at=window_end(newest), mode=MONITOR_MODE_REAL
+        )
+        probe_buckets = self._snapshots.aggregate_by_channel(
+            start_at=newest, end_at=window_end(newest), mode=MONITOR_MODE_PROBE
+        )
+        buckets = {
+            key: bucket
+            for key, bucket in real_buckets.items()
+            if modes.get(key[2], MONITOR_MODE_REAL) == MONITOR_MODE_REAL
+        }
+        buckets.update(
+            {
+                key: bucket
+                for key, bucket in probe_buckets.items()
+                if modes.get(key[2], MONITOR_MODE_REAL) == MONITOR_MODE_PROBE
+            }
+        )
         if group_id is not None:
             buckets = {key: bucket for key, bucket in buckets.items() if key[0] == group_id}
         group_names = self._references.group_names({key[0] for key in buckets})
@@ -139,7 +213,12 @@ class GroupMonitorQueryApplicationService:
                 buckets.items(), key=lambda item: (item[0][0], str(item[0][1]), item[0][2])
             )
         ]
-        return {"items": items, "window_start": newest.isoformat(), "window_minutes": WINDOW_MINUTES}
+        return {
+            "items": items,
+            "modes": modes,
+            "window_start": newest.isoformat(),
+            "window_minutes": WINDOW_MINUTES,
+        }
 
     def alert_list(
         self,
@@ -179,17 +258,19 @@ class GroupMonitorQueryApplicationService:
             "page_size": page_size,
         }
 
-    def _group_items(self, *, groups: list, with_alert_count: bool) -> list[dict]:
-        """按「分组 × 请求类型 × 时段」构造字段平铺的指标行。"""
+    def _group_items(
+        self, *, groups: list, with_alert_count: bool, request_types: tuple[str, ...], modes: dict[str, str]
+    ) -> list[dict]:
+        """按「分组 × 请求类型 × 时段」构造字段平铺的指标行，每个类型取自己的数据模式。"""
 
         newest = newest_window(datetime.now(UTC))
         windows = recent_windows(newest=newest, count=WINDOWS_PER_DAY)
         group_ids = [group.id for group in groups]
         rows = self._snapshots.list_range(start_at=windows[0], end_at=windows[-1], group_ids=group_ids)
-        latest_buckets: dict[tuple[int, str], MetricBucket] = {}
-        day_buckets: dict[tuple[int, str], MetricBucket] = defaultdict(MetricBucket)
+        latest_buckets: dict[tuple[str, int, str], MetricBucket] = {}
+        day_buckets: dict[tuple[str, int, str], MetricBucket] = defaultdict(MetricBucket)
         for row in rows:
-            key = (row.token_group_id, row.request_type)
+            key = (row.mode, row.token_group_id, row.request_type)
             bucket = MetricBucket.from_snapshot(row)
             if row.window_start == newest:
                 latest_buckets[key] = bucket
@@ -197,8 +278,8 @@ class GroupMonitorQueryApplicationService:
         alert_counts = self._alerts.count_open_by_group()
         items: list[dict] = []
         for group in groups:
-            for request_type in TRACKED_REQUEST_TYPES:
-                bucket_key = (group.id, request_type)
+            for request_type in request_types:
+                bucket_key = (modes.get(request_type, MONITOR_MODE_REAL), group.id, request_type)
                 for period, bucket, window_start in (
                     (LATEST_PERIOD, latest_buckets.get(bucket_key), newest),
                     (LAST_24H_PERIOD, day_buckets.get(bucket_key), None),
@@ -267,11 +348,12 @@ def _metric_item(
 def _series_payload(
     *,
     request_type: str,
+    mode: str,
     metric: str,
     unit: str,
     label: str,
     windows: list[datetime],
-    buckets: dict[tuple[datetime, str], MetricBucket],
+    buckets: dict[tuple[str, datetime, str], MetricBucket],
 ) -> dict:
     """构造一条与 x 轴等长的指标序列，缺失窗口补 ``None``。"""
 
@@ -281,7 +363,7 @@ def _series_payload(
         "metric": metric,
         "name": f"{_REQUEST_TYPE_LABELS.get(request_type, request_type)} · {label}",
         "unit": unit,
-        "values": [_metric_value(buckets.get((window_start, request_type)), metric) for window_start in windows],
+        "values": [_metric_value(buckets.get((mode, window_start, request_type)), metric) for window_start in windows],
     }
 
 
@@ -291,6 +373,26 @@ def _metric_value(bucket: MetricBucket | None, metric: str):
     if bucket is None:
         return None
     return getattr(bucket, metric)
+
+
+def _range_summaries(*, rows: list, request_types: list[str], modes: dict[str, str]) -> list[dict]:
+    """按请求类型汇总整个查询区间的计数，每个类型只累计其当前模式的数据。"""
+
+    totals = {request_type: MetricBucket() for request_type in request_types}
+    for row in rows:
+        current = totals.get(row.request_type)
+        if current is not None and row.mode == modes.get(row.request_type, MONITOR_MODE_REAL):
+            totals[row.request_type] = current + MetricBucket.from_snapshot(row)
+    return [
+        {
+            "request_type": request_type,
+            "sample_count": bucket.sample_count,
+            "success_rate": bucket.success_rate,
+            "average_duration_ms": bucket.average_duration_ms,
+            "average_first_token_ms": bucket.average_first_token_ms,
+        }
+        for request_type, bucket in totals.items()
+    ]
 
 
 def _alert_item(alert, group_names: dict[int, str], channel_names: dict[UUID, str]) -> dict:

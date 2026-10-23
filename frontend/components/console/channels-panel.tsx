@@ -334,11 +334,17 @@ function clonePricingRules(rules: TemplatePricingRule[] | undefined) {
  */
 function UpstreamModelBatchCreateDialog({
   names,
+  groupIds,
+  onGroupIdsChange,
   onClose,
   onCreated,
 }: {
   /** 待创建的上游模型名（父级已剔除本地已存在与已加入渠道的模型） */
   names: string[];
+  /** 已选令牌分组（受控）：与渠道表单共享同一组 token_group_ids */
+  groupIds: string[];
+  /** 分组变更回调：父级同步回渠道表单（与打开弹窗时的既有分组取并集） */
+  onGroupIdsChange: (ids: string[]) => void;
   onClose: () => void;
   /** 创建成功回调：父级把新模型名同步进渠道服务模型并刷新模型选项 */
   onCreated: (names: string[]) => void;
@@ -347,6 +353,15 @@ function UpstreamModelBatchCreateDialog({
   const [providers, setProviders] = useState<ProviderOption[] | null>(null);
   const [providersError, setProvidersError] = useState("");
   const [providerId, setProviderId] = useState("");
+  /** 令牌分组候选：默认定价规则的播种目标；已选值由渠道表单受控传入 */
+  const [groupOptions, setGroupOptions] = useState<(GroupOption & { is_default?: boolean })[]>([]);
+  /** 打开弹窗时渠道是否已选分组：仅未选时才回填系统默认分组 */
+  const hadGroupsAtMount = useRef(groupIds.length > 0);
+  /** 最新回调引用：默认分组回填只执行一次，不随受控值变化重复触发 */
+  const onGroupIdsChangeRef = useRef(onGroupIdsChange);
+  useEffect(() => {
+    onGroupIdsChangeRef.current = onGroupIdsChange;
+  }, [onGroupIdsChange]);
   /** 空字符串表示按模型名逐个推断 */
   const [modelType, setModelType] = useState<ModelType | "">("");
   const [preview, setPreview] = useState<BatchPreviewResponse | null>(null);
@@ -364,6 +379,19 @@ function UpstreamModelBatchCreateDialog({
 
   /** 拉取可选端点列表 */
   useEffect(() => {
+    get<unknown>("/admin/token/groups/list", {
+      params: { page: 1, page_size: 100 },
+    })
+      .then((data) => {
+        const list = normalizeOptions<GroupOption & { is_default?: boolean }>(data);
+        setGroupOptions(list);
+        // 渠道表单未选分组时才回填系统默认分组；已选则保留（新增模型时取并集）
+        const def = list.find((g) => g.is_default) ?? list[0];
+        if (def && !hadGroupsAtMount.current) {
+          onGroupIdsChangeRef.current([String(def.id)]);
+        }
+      })
+      .catch(() => {});
     get<unknown>("/admin/models/providers/list")
       .then((data) => setProviders(normalizeOptions<ProviderOption>(data)))
       .catch((err) => {
@@ -494,6 +522,9 @@ function UpstreamModelBatchCreateDialog({
     try {
       await post("/admin/models/batch-create", {
         provider_id: providerId,
+        ...(groupIds.length > 0
+          ? { token_group_ids: groupIds.map(Number) }
+          : {}),
         items: selectedRows.map((row) => ({
           name: row.model_name,
           ...(row.requires_pricing_input
@@ -597,6 +628,25 @@ function UpstreamModelBatchCreateDialog({
                 />
               )}
             </div>
+            {groupOptions.length > 0 && (
+              <div className="min-w-56 flex-1 space-y-1.5">
+                <span className="text-sm font-medium">
+                  {t("channels.batchCreate.groupsLabel")}
+                </span>
+                <MultiSelect
+                  aria-label={t("channels.batchCreate.groupsLabel")}
+                  values={groupIds}
+                  onValuesChange={onGroupIdsChange}
+                  options={groupOptions.map((g) => ({
+                    value: String(g.id),
+                    label: g.is_default
+                      ? `${g.name}（${t("channels.batchCreate.groupDefaultTag")}）`
+                      : g.name,
+                  }))}
+                  placeholder={t("channels.batchCreate.groupsPlaceholder")}
+                />
+              </div>
+            )}
             {providerTypes.length > 0 && (
               <div className="min-w-40 space-y-1.5">
                 <span className="text-sm font-medium">
@@ -1001,6 +1051,12 @@ function ChannelFormDialog({
       );
     }
     if (missing.length > 0) setBatchCreateNames(missing);
+  };
+
+  /** 批量配置分组变更同步回渠道表单：与渠道既有分组取并集，避免覆盖渠道原有分组 */
+  const onBatchGroupIdsChange = (ids: string[]) => {
+    const persisted = (channel?.token_group_ids ?? []).map(String);
+    patch({ tokenGroupIds: [...new Set([...persisted, ...ids])] });
   };
 
   /** 批量创建成功：全部勾选进服务模型并刷新父级模型选项 */
@@ -1603,10 +1659,12 @@ function ChannelFormDialog({
               </div>
             </form>
 
-            {/* 从上游模型批量创建本地模型：批量预览价格 → 批量创建 */}
+            {/* 从上游模型批量创建本地模型：批量预览价格 → 批量创建；分组与渠道表单联动（取并集） */}
             {batchCreateNames !== null && (
               <UpstreamModelBatchCreateDialog
                 names={batchCreateNames}
+                groupIds={form.tokenGroupIds}
+                onGroupIdsChange={onBatchGroupIdsChange}
                 onClose={() => setBatchCreateNames(null)}
                 onCreated={onUpstreamBatchCreated}
               />

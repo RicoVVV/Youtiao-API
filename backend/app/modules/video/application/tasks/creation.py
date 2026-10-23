@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlmodel import Session
 
 from app.bootstrap.container import get_channel_provider_factory, get_provider_template_registry
+from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError, error_context
 from app.modules.channels.application.concurrency import release_task_concurrency, reserve_task_concurrency
 from app.modules.channels.application.configuration import resolve_video_model
@@ -22,6 +23,7 @@ from app.modules.channels.application.model_mapping import apply_upstream_model_
 from app.modules.channels.application.routing import select_channel_in_group_order
 from app.modules.channels.crud.channels import ChannelCrud
 from app.modules.channels.model.channel import Channel
+from app.modules.channels.runtime.channel_runtime import get_channel_runtime
 from app.modules.channels.runtime.routing_snapshot import list_routable_channel_bindings
 from app.modules.models.model import ModelRoute
 from app.modules.pricing.application.engine import (
@@ -214,7 +216,8 @@ def _resolve_new_configuration(
     created_at = datetime.now(UTC)
     attempted = False
     unmatched_group_ids: list[int] = []
-    for route in select_channel_in_group_order(channels, group_ids=group_ids):
+    runtime = get_channel_runtime() if get_settings().routing_runtime_enabled else None
+    for route in select_channel_in_group_order(channels, group_ids=group_ids, runtime=runtime):
         attempted = True
         template = get_provider_template_registry().get_internal(public_model.template_id)
         if template is None:
@@ -401,6 +404,7 @@ def _terminate_task_and_release_charge(
     error_code: str,
     error_message: str,
     upstream_response_payload: dict | None = None,
+    is_user_error: bool = False,
 ) -> bool:
     """将尚未终态的视频任务终止，并在同一事务中幂等释放其预占资金。
 
@@ -438,6 +442,7 @@ def _terminate_task_and_release_charge(
         reason="视频生成失败退款",
         public_response_payload=_public_task_response_payload(locked_task, status=target, error_payload=error_snapshot),
         upstream_response_payload=upstream_response_payload,
+        is_user_error=is_user_error,
     )
     if usage is None:
         return False
@@ -739,6 +744,7 @@ async def _submit_video_task(session: Session, *, task: VideoTask) -> VideoTask:
             error_code=error_code,
             error_message=error_message,
             upstream_response_payload=exc.response_body,
+            is_user_error=exc.is_user_error,
         )
         return task
     task.upstream_task_id = submission.upstream_task_id

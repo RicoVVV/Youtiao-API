@@ -12,17 +12,17 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bootstrap.container import get_channel_provider_factory, get_provider_template_registry
+from app.core.channel_automation import ChannelAutomationConfig
 from app.core.config import get_settings
+from app.modules.channels.application.lifecycle import set_channel_auto_disabled
 from app.modules.channels.application.model_mapping import apply_upstream_model_name
+from app.modules.channels.application.probe_request import build_probe_request
 from app.modules.channels.crud.channels import ChannelCrud
 from app.modules.channels.runtime.channel_runtime import ProbeRuntimeResult, get_channel_runtime
-from app.modules.channels.runtime.routing_snapshot import publish_routing_snapshot_invalidation
 from app.modules.providers.contracts import GenerationProvider, ProviderError
+from app.modules.system_settings.application.services import SystemSettingsApplicationService
 
 logger = logging.getLogger(__name__)
-
-_PROBE_MESSAGE = "hi"
-_PROBE_MAX_TOKENS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +34,7 @@ class _ProbeTarget:
     auto_disabled: bool
     route_ids: list[UUID]
     provider: GenerationProvider | None
+    operation: str | None
     request_body: dict[str, Any] | None
 
 
@@ -47,12 +48,16 @@ class ChannelHealthProbeApplicationService:
     async def probe_all(self) -> dict[str, int]:
         """执行一轮探测，返回本轮统计。单渠道异常不影响其他渠道。"""
 
+        config = await self._load_automation_config()
+        counters = {"probed": 0, "succeeded": 0, "failed": 0, "disabled": 0, "enabled": 0, "skipped": 0}
+        if not config.probe_enabled:
+            logger.info("管理员已关闭定时渠道探测，跳过本轮")
+            return counters
         targets = await self._load_targets()
         semaphore = asyncio.Semaphore(self._settings.routing_probe_concurrency)
         results = await asyncio.gather(
-            *(self._probe_one(target, semaphore) for target in targets), return_exceptions=True
+            *(self._probe_one(target, semaphore, config) for target in targets), return_exceptions=True
         )
-        counters = {"probed": 0, "succeeded": 0, "failed": 0, "disabled": 0, "enabled": 0, "skipped": 0}
         for target, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
                 logger.warning("渠道健康探测异常 channel_id=%s", target.channel_id, exc_info=result)
@@ -62,11 +67,13 @@ class ChannelHealthProbeApplicationService:
         logger.info("渠道健康探测完成 %s", counters)
         return counters
 
-    async def _probe_one(self, target: _ProbeTarget, semaphore: asyncio.Semaphore) -> str:
-        if target.provider is None or target.request_body is None:
+    async def _probe_one(
+        self, target: _ProbeTarget, semaphore: asyncio.Semaphore, config: ChannelAutomationConfig
+    ) -> str:
+        if target.provider is None or target.operation is None or target.request_body is None:
             return "skipped"
-        chat = getattr(target.provider, "chat", None)
-        if not callable(chat):
+        probe_call = getattr(target.provider, target.operation, None)
+        if not callable(probe_call):
             return "skipped"
         async with semaphore:
             if await asyncio.to_thread(self._should_skip_disabled, target):
@@ -74,7 +81,7 @@ class ChannelHealthProbeApplicationService:
             started_at_counter = perf_counter()
             succeeded = False
             try:
-                await chat(target.request_body, timeout=self._settings.routing_probe_timeout_seconds)
+                await probe_call(target.request_body, timeout=config.probe_timeout_seconds)
                 succeeded = True
             except ProviderError as exc:
                 logger.info("渠道健康探测失败 channel_id=%s code=%s message=%s", target.channel_id, exc.code, exc)
@@ -87,7 +94,7 @@ class ChannelHealthProbeApplicationService:
             succeeded,
             latency_ms,
         )
-        applied = await self._apply_lifecycle(target, succeeded=succeeded, runtime=runtime_result)
+        applied = await self._apply_lifecycle(target, succeeded=succeeded, runtime=runtime_result, config=config)
         if applied == "disabled" or applied == "enabled":
             return applied
         return "succeeded" if succeeded else "failed"
@@ -113,44 +120,52 @@ class ChannelHealthProbeApplicationService:
             return ProbeRuntimeResult(state="closed", probe_fails=0, probe_successes=0)
 
     async def _apply_lifecycle(
-        self, target: _ProbeTarget, *, succeeded: bool, runtime: ProbeRuntimeResult
+        self,
+        target: _ProbeTarget,
+        *,
+        succeeded: bool,
+        runtime: ProbeRuntimeResult,
+        config: ChannelAutomationConfig,
     ) -> str | None:
         if (
-            not succeeded
+            config.auto_disable_enabled
+            and not succeeded
             and not target.auto_disabled
             and runtime.probe_fails >= self._settings.routing_probe_failure_threshold
         ):
-            disabled = await self._set_auto_disabled(target.channel_id, disabled=True)
+            disabled = await set_channel_auto_disabled(
+                self._session_factory, channel_id=target.channel_id, disabled=True
+            )
             return "disabled" if disabled else None
         if (
-            succeeded
+            config.auto_enable_enabled
+            and succeeded
             and target.auto_disabled
             and runtime.probe_successes >= self._settings.routing_probe_recovery_threshold
         ):
-            enabled = await self._set_auto_disabled(target.channel_id, disabled=False)
+            enabled = await set_channel_auto_disabled(
+                self._session_factory, channel_id=target.channel_id, disabled=False
+            )
             return "enabled" if enabled else None
         return None
-
-    async def _set_auto_disabled(self, channel_id: UUID, *, disabled: bool) -> bool:
-        async with self._session_factory() as session:
-            route_ids = await session.run_sync(_apply_auto_state, channel_id, disabled)
-        if route_ids is None:
-            return False
-        try:
-            if not disabled:
-                await asyncio.to_thread(self._runtime().reset_channel, channel_id=channel_id, route_ids=route_ids)
-        except Exception:
-            logger.warning("渠道运行时状态重置失败 channel_id=%s", channel_id, exc_info=True)
-        publish_routing_snapshot_invalidation()
-        logger.warning("渠道已%s channel_id=%s", "自动停用" if disabled else "自动恢复启用", channel_id)
-        return True
 
     async def _load_targets(self) -> list[_ProbeTarget]:
         async with self._session_factory() as session:
             return await session.run_sync(_build_probe_targets)
 
+    async def _load_automation_config(self) -> ChannelAutomationConfig:
+        async with self._session_factory() as session:
+            return await session.run_sync(_refresh_automation_config)
+
     def _runtime(self):
         return get_channel_runtime()
+
+
+def _refresh_automation_config(sync_session) -> ChannelAutomationConfig:
+    """读取管理员渠道自动化配置并刷新进程内缓存，保证多实例部署下按分钟级生效。"""
+
+    service = SystemSettingsApplicationService(sync_session, get_settings())
+    return service.refresh_channel_automation_config()
 
 
 def _build_probe_targets(sync_session) -> list[_ProbeTarget]:
@@ -172,6 +187,7 @@ def _build_probe_targets(sync_session) -> list[_ProbeTarget]:
                     auto_disabled=auto_disabled,
                     route_ids=route_ids,
                     provider=None,
+                    operation=None,
                     request_body=None,
                 )
             )
@@ -179,11 +195,11 @@ def _build_probe_targets(sync_session) -> list[_ProbeTarget]:
         template = registry.get(model.template_id)
         if template is None:
             continue
-        request_body = {
-            "model": model.name,
-            "messages": [{"role": "user", "content": _PROBE_MESSAGE}],
-            "max_tokens": _PROBE_MAX_TOKENS,
-        }
+        probe = build_probe_request(template_id=template["template_id"], model_name=model.name)
+        if probe is None:
+            logger.warning("渠道探测模板未登记最小请求 channel_id=%s template_id=%s", channel.id, model.template_id)
+            continue
+        request_body = probe.body
         apply_upstream_model_name(request_body, channel.model_mapping.get(model.name))
         request_body.update(deepcopy(channel.param_override))
         try:
@@ -206,6 +222,7 @@ def _build_probe_targets(sync_session) -> list[_ProbeTarget]:
                 auto_disabled=auto_disabled,
                 route_ids=route_ids,
                 provider=provider,
+                operation=probe.operation,
                 request_body=request_body,
             )
         )
@@ -221,33 +238,3 @@ def _resolve_probe_model(channel_crud: ChannelCrud, supported_models: list[str])
         if model is not None and model.model_type == "text":
             return model
     return None
-
-
-def _apply_auto_state(sync_session, channel_id: UUID, disabled: bool) -> list[UUID] | None:
-    """在短事务内切换自动停用状态，返回该渠道的路由标识供运行时重置。"""
-
-    channel_crud = ChannelCrud(sync_session)
-    try:
-        channel = channel_crud.get_channel_for_update(channel_id=channel_id)
-        if channel is None:
-            sync_session.rollback()
-            return None
-        if disabled:
-            if not channel.active or channel.auto_disabled_at is not None:
-                sync_session.rollback()
-                return None
-            channel.active = False
-            channel.auto_disabled_at = datetime.now(UTC)
-            route_ids: list[UUID] = []
-        else:
-            if channel.auto_disabled_at is None:
-                sync_session.rollback()
-                return None
-            channel.active = True
-            channel.auto_disabled_at = None
-            route_ids = [route.id for route in channel_crud.list_routes_for_channel(channel_id=channel.id)]
-        sync_session.commit()
-        return route_ids
-    except Exception:
-        sync_session.rollback()
-        raise

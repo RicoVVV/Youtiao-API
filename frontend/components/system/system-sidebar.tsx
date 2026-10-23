@@ -61,7 +61,13 @@ const MENU_ITEMS = [
       { href: "/system/site-info", labelKey: "siteInfo" },
     ],
   },
-  { key: "ops", icon: Wrench, children: [] },
+  {
+    key: "ops",
+    icon: Wrench,
+    children: [
+      { href: "/system/channel-automation", labelKey: "channelAutomation" },
+    ],
+  },
 ] as const;
 
 export function SystemSidebar() {

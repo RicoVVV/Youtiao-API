@@ -69,8 +69,12 @@ services:
       PROVIDER_READ_TIMEOUT_SECONDS: "1800"
       VIDEO_TASK_TIMEOUT_SECONDS: "86400"
       VIDEO_MAINTENANCE_BATCH_SIZE: "100"
-      MEDIA_ROOT: /app/media
-    command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "8", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-"]
+      # 素材与成品必须落在 media_data 持久卷上；写进容器可写层会在重建后丢失。
+      VIDEO_MATERIAL_STORAGE_DIR: /app/media/video-materials
+      VIDEO_RESULT_STORAGE_DIR: /app/media/video-results
+      # 支付回调公网地址（主站 HTTPS 域名），由 docker/.env 注入，留空时使用相对配置。
+      PAYMENT_CALLBACK_BASE_URL: ${PAYMENT_CALLBACK_BASE_URL:-}
+    command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-"]
     volumes:
       - media_data:/app/media
       # 服务器资源监控：宿主 procfs 用于 CPU、内存、负载与网络计数，

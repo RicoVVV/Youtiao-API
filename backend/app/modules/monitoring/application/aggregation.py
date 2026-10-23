@@ -18,7 +18,9 @@ from app.modules.monitoring.application.window import (
     window_end,
 )
 from app.modules.monitoring.crud.alert_crud import MonitorAlertCrud
+from app.modules.monitoring.crud.probe_result_crud import GroupProbeResultCrud
 from app.modules.monitoring.crud.snapshot_crud import SnapshotCrud
+from app.modules.monitoring.model import MONITOR_MODE_PROBE, MONITOR_MODE_REAL
 from app.modules.monitoring.model.metric_bucket import MetricBucket
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ class GroupMonitorAggregationService:
         self._settings = settings
         self._snapshots = SnapshotCrud(session)
         self._alerts = MonitorAlertCrud(session)
+        self._probes = GroupProbeResultCrud(session)
         self._alerting = MonitorAlertApplicationService(session)
 
     def aggregate(self, *, now: datetime) -> dict[str, int]:
@@ -45,6 +48,9 @@ class GroupMonitorAggregationService:
         counters["snapshots_removed"] = self._snapshots.delete_expired(
             before=now - timedelta(days=self._settings.monitoring_snapshot_retention_days)
         )
+        counters["probe_results_removed"] = self._probes.delete_expired(
+            before=now - timedelta(days=self._settings.monitoring_snapshot_retention_days)
+        )
         counters["alerts_removed"] = self._alerts.delete_expired(
             before=now - timedelta(days=self._settings.monitoring_alert_retention_days)
         )
@@ -52,20 +58,32 @@ class GroupMonitorAggregationService:
         return counters
 
     def _write_missing_windows(self, *, windows: list[datetime]) -> dict[str, int]:
-        """为尚无快照的窗口写入分组级计数，已聚合的窗口跳过。"""
+        """为尚无快照的窗口写入真实请求与嗅探两套计数，已聚合的窗口跳过。"""
 
         written = 0
         aggregated = 0
         for window_start in windows:
             if self._snapshots.window_has_rows(window_start=window_start):
                 continue
-            buckets = self._snapshots.aggregate_by_group(start_at=window_start, end_at=window_end(window_start))
+            end_at = window_end(window_start)
+            real_buckets = self._snapshots.aggregate_by_group(start_at=window_start, end_at=end_at)
+            probe_buckets = self._snapshots.aggregate_probe_by_group(start_at=window_start, end_at=end_at)
+            buckets = {
+                **{
+                    (MONITOR_MODE_REAL, group_id, request_type): bucket
+                    for (group_id, request_type), bucket in real_buckets.items()
+                },
+                **{
+                    (MONITOR_MODE_PROBE, group_id, request_type): bucket
+                    for (group_id, request_type), bucket in probe_buckets.items()
+                },
+            }
             written += self._snapshots.replace_window(window_start=window_start, buckets=buckets)
             aggregated += 1
         return {"snapshot_rows": written, "snapshot_windows": aggregated}
 
     def _evaluate_newest_window(self, window_start: datetime) -> dict[str, int]:
-        """评估最新窗口的分组级与渠道级指标。"""
+        """评估最新窗口的真实请求指标；嗅探数据只用于展示，不参与告警。"""
 
         end_at = window_end(window_start)
         group_buckets = self._window_group_buckets(window_start=window_start, end_at=end_at)
@@ -77,9 +95,9 @@ class GroupMonitorAggregationService:
         )
 
     def _window_group_buckets(self, *, window_start: datetime, end_at: datetime) -> dict[tuple[int, str], MetricBucket]:
-        """读取窗口的分组级计数；窗口尚未落库时按当前数据即时聚合。"""
+        """读取窗口的真实请求分组计数；窗口尚未落库时按当前数据即时聚合。"""
 
-        rows = self._snapshots.list_window(window_start=window_start)
+        rows = self._snapshots.list_window(window_start=window_start, mode=MONITOR_MODE_REAL)
         if not rows:
             return self._snapshots.aggregate_by_group(start_at=window_start, end_at=end_at)
         return {(row.token_group_id, row.request_type): MetricBucket.from_snapshot(row) for row in rows}

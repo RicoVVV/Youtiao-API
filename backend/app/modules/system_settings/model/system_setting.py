@@ -6,6 +6,11 @@ from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func, t
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field
 
+from app.core.channel_automation import (
+    DEFAULT_AUTO_DISABLE_KEYWORDS,
+    DEFAULT_AUTO_DISABLE_STATUS_CODES,
+    DEFAULT_AUTO_RETRY_STATUS_CODES,
+)
 from app.core.database import SQLModelBase
 
 SYSTEM_SETTINGS_ID = UUID(int=0)
@@ -51,6 +56,53 @@ class SystemSetting(SQLModelBase, table=True):
             nullable=False,
             server_default="false",
             comment="是否启用用户余额预警邮件，依赖邮箱注册验证提供用户邮箱",
+        ),
+    )
+    channel_probe_enabled: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false", comment="是否定时探测所有渠道"),
+    )
+    channel_probe_interval_minutes: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default="1", comment="定时探测所有渠道的间隔分钟数"),
+    )
+    channel_probe_timeout_seconds: int = Field(
+        default=5,
+        sa_column=Column(Integer, nullable=False, server_default="5", comment="单次渠道探测的最长响应秒数"),
+    )
+    channel_auto_disable_enabled: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false", comment="失败时是否自动禁用渠道"),
+    )
+    channel_auto_enable_enabled: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default="true", comment="成功后是否自动启用渠道"),
+    )
+    channel_auto_disable_status_codes: str = Field(
+        default=DEFAULT_AUTO_DISABLE_STATUS_CODES,
+        sa_column=Column(
+            Text,
+            nullable=False,
+            server_default=DEFAULT_AUTO_DISABLE_STATUS_CODES,
+            comment="触发自动禁用的上游状态码，逗号分隔，支持起止范围",
+        ),
+    )
+    channel_auto_retry_status_codes: str = Field(
+        default=DEFAULT_AUTO_RETRY_STATUS_CODES,
+        sa_column=Column(
+            Text,
+            nullable=False,
+            server_default=DEFAULT_AUTO_RETRY_STATUS_CODES,
+            comment="允许自动重试的上游状态码，逗号分隔，支持起止范围；504 与 524 始终不重试",
+        ),
+    )
+    channel_auto_disable_keywords: str = Field(
+        default=DEFAULT_AUTO_DISABLE_KEYWORDS,
+        sa_column=Column(
+            Text,
+            nullable=False,
+            server_default=DEFAULT_AUTO_DISABLE_KEYWORDS,
+            comment="触发自动禁用的上游错误关键词，换行分隔，不区分大小写",
         ),
     )
     sidebar_visibility: dict[str, Any] = Field(

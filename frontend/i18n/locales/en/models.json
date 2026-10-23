@@ -41,6 +41,9 @@
     "noModels": "No models available",
     "noMatch": "No matching models found. Try a different keyword."
   },
+  "scroll": {
+    "more": "More models"
+  },
   "detail": {
     "copyName": "Copy model name",
     "close": "Close",

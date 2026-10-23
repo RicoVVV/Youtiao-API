@@ -173,6 +173,7 @@ class UsageApplicationService:
         completed_at: datetime | None = None,
         duration_ms: int | None = None,
         first_token_duration_ms: int | None = None,
+        is_user_error: bool = False,
     ) -> UsageRecord:
         now = datetime.now(UTC)
         return self._crud.create(
@@ -193,6 +194,7 @@ class UsageApplicationService:
                 request_payload=dict(request_payload),
                 amount=Decimal(0),
                 status=UsageRecordStatus.failed,
+                is_user_error=is_user_error,
                 started_at=started_at or now,
                 completed_at=completed_at or now,
                 duration_ms=duration_ms,
@@ -331,6 +333,7 @@ class UsageApplicationService:
         reason: str,
         public_response_payload: dict | None = None,
         upstream_response_payload: dict | None = None,
+        is_user_error: bool = False,
     ) -> UsageRecord | None:
         record = self._crud.get_for_resource_update(resource_type=resource_type, resource_id=resource_id)
         if record is None or record.status != UsageRecordStatus.reserved:
@@ -340,6 +343,7 @@ class UsageApplicationService:
         )
         now = datetime.now(UTC)
         record.status = UsageRecordStatus.refunded
+        record.is_user_error = is_user_error
         record.completed_at = now
         if record.started_at is not None:
             record.duration_ms = int((now - record.started_at).total_seconds() * 1000)

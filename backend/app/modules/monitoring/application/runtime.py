@@ -6,14 +6,21 @@
 """
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
-from app.core.database import get_session_factory
+from app.core.database import get_async_session_factory, get_session_factory
+from app.modules.channels.runtime.task_gate import acquire_window
 from app.modules.monitoring.application.aggregation import GroupMonitorAggregationService
 from app.modules.monitoring.application.collection import ServerMetricCollectionService
+from app.modules.monitoring.application.probe import GroupProbeApplicationService
+from app.modules.monitoring.application.traffic_settings import MonitorTrafficSettingsApplicationService
 from app.modules.monitoring.application.window import floor_server_window, newest_window
+from app.modules.monitoring.model import MONITOR_MODE_PROBE
 from app.modules.system_tasks.application.services import AsyncSystemTaskApplicationService
+
+logger = logging.getLogger(__name__)
 
 
 class GroupMonitorSystemTaskRunner:
@@ -66,3 +73,37 @@ class ServerMetricSystemTaskRunner:
             counters = ServerMetricCollectionService(session, get_settings()).collect(now=datetime.now(UTC))
             session.commit()
             return counters
+
+
+class GroupMonitorProbeSystemTaskRunner:
+    """嗅探模式下按分钟向每个分组发送最小文本请求。"""
+
+    task_type = "group_monitor_probe"
+
+    async def schedule(self, service: AsyncSystemTaskApplicationService) -> None:
+        """仅在文本类型使用嗅探模式时按管理员配置的周期幂等入队探测任务。"""
+
+        try:
+            text_mode, interval = await asyncio.to_thread(self._read_settings)
+        except Exception:
+            logger.warning("分组嗅探模式读取失败，跳过本轮入队", exc_info=True)
+            return
+        if text_mode != MONITOR_MODE_PROBE:
+            return
+        # 周期变化时使用新的闸门键，避免旧周期的长 TTL 阻塞新配置立即生效。
+        if not acquire_window(f"group-monitor-probe:{interval}", interval):
+            return
+        await service.enqueue(task_type=self.task_type)
+
+    async def run(self) -> dict[str, int]:
+        """执行一轮分组文本嗅探。"""
+
+        return await GroupProbeApplicationService(get_async_session_factory()).probe_all()
+
+    @staticmethod
+    def _read_settings() -> tuple[str, int]:
+        """读取文本类型当前模式与嗅探周期。"""
+
+        with get_session_factory()() as session:
+            settings = MonitorTrafficSettingsApplicationService(session)
+            return settings.current_text_mode(), settings.current_probe_interval_seconds()

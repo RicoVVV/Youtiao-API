@@ -10,7 +10,12 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, and_, case, delete, func, select
 from sqlmodel import Session
 
-from app.modules.monitoring.model import GroupMetricSnapshot
+from app.modules.monitoring.model import (
+    MONITOR_MODE_PROBE,
+    MONITOR_MODE_REAL,
+    GroupMetricSnapshot,
+    GroupProbeResult,
+)
 from app.modules.monitoring.model.metric_bucket import MetricBucket
 from app.modules.usage.model import UsageRecord, UsageRecordStatus
 
@@ -18,7 +23,11 @@ TRACKED_REQUEST_TYPES = ("text", "image", "video")
 """纳入分组监控的请求类型；渠道测试等其它类型不参与统计。"""
 
 _TERMINAL_STATUSES = (UsageRecordStatus.succeeded, UsageRecordStatus.failed, UsageRecordStatus.refunded)
-"""参与统计的终态；``reserved`` 表示尚未完成，不计入任何窗口。"""
+"""参与统计的终态；``reserved`` 表示尚未完成，不计入任何窗口。
+
+用户请求内容或参数错误（``is_user_error``）由客户端造成，不计入监控样本，
+避免用户写错请求拉低分组成功率并误触发告警。
+"""
 
 _SUCCEEDED = UsageRecord.status == UsageRecordStatus.succeeded
 _FIRST_TOKEN_RECORDED = and_(_SUCCEEDED, UsageRecord.first_token_duration_ms.is_not(None))
@@ -46,11 +55,72 @@ class SnapshotCrud:
             if row.token_group_id is not None
         }
 
-    def aggregate_by_channel(
-        self, *, start_at: datetime, end_at: datetime
-    ) -> dict[tuple[int, UUID, str], MetricBucket]:
-        """按「分组 × 渠道 × 请求类型」聚合窗口内的终态请求计数，仅供告警定位使用。"""
+    def aggregate_probe_by_group(self, *, start_at: datetime, end_at: datetime) -> dict[tuple[int, str], MetricBucket]:
+        """按「分组 × 请求类型」聚合窗口内的平台嗅探结果。"""
 
+        succeeded = GroupProbeResult.status == "succeeded"
+        statement = (
+            select(
+                GroupProbeResult.token_group_id,
+                GroupProbeResult.request_type.label("dimension"),
+                _count_of(succeeded).label("succeeded_count"),
+                _count_of(GroupProbeResult.status == "failed").label("failed_count"),
+                _count_of(succeeded).label("first_token_count"),
+                _sum_of(succeeded, GroupProbeResult.duration_ms).label("total_duration_ms"),
+                _sum_of(
+                    and_(succeeded, GroupProbeResult.first_token_duration_ms.is_not(None)),
+                    GroupProbeResult.first_token_duration_ms,
+                ).label("first_token_sum_ms"),
+            )
+            .where(
+                GroupProbeResult.completed_at >= start_at,
+                GroupProbeResult.completed_at < end_at,
+            )
+            .group_by(GroupProbeResult.token_group_id, GroupProbeResult.request_type)
+        )
+        return {
+            (row.token_group_id, row.dimension): _to_bucket(row)
+            for row in self._session.execute(statement).all()
+            if row.token_group_id is not None
+        }
+
+    def aggregate_by_channel(
+        self, *, start_at: datetime, end_at: datetime, mode: str = MONITOR_MODE_REAL
+    ) -> dict[tuple[int, UUID, str], MetricBucket]:
+        """按「分组 × 渠道 × 请求类型」聚合窗口内的计数，供告警定位与运维视图使用。"""
+
+        if mode == MONITOR_MODE_PROBE:
+            succeeded = GroupProbeResult.status == "succeeded"
+            statement = (
+                select(
+                    GroupProbeResult.token_group_id,
+                    GroupProbeResult.channel_id,
+                    GroupProbeResult.request_type.label("dimension"),
+                    _count_of(succeeded).label("succeeded_count"),
+                    _count_of(GroupProbeResult.status == "failed").label("failed_count"),
+                    _count_of(succeeded).label("first_token_count"),
+                    _sum_of(succeeded, GroupProbeResult.duration_ms).label("total_duration_ms"),
+                    _sum_of(
+                        and_(succeeded, GroupProbeResult.first_token_duration_ms.is_not(None)),
+                        GroupProbeResult.first_token_duration_ms,
+                    ).label("first_token_sum_ms"),
+                )
+                .where(
+                    GroupProbeResult.completed_at >= start_at,
+                    GroupProbeResult.completed_at < end_at,
+                    GroupProbeResult.channel_id.is_not(None),
+                )
+                .group_by(
+                    GroupProbeResult.token_group_id,
+                    GroupProbeResult.channel_id,
+                    GroupProbeResult.request_type,
+                )
+            )
+            return {
+                (row.token_group_id, row.channel_id, row.dimension): _to_bucket(row)
+                for row in self._session.execute(statement).all()
+                if row.token_group_id is not None and row.channel_id is not None
+            }
         statement = self._aggregate_statement(
             start_at=start_at,
             end_at=end_at,
@@ -63,16 +133,17 @@ class SnapshotCrud:
             if row.token_group_id is not None and row.channel_id is not None
         }
 
-    def replace_window(self, *, window_start: datetime, buckets: dict[tuple[int, str], MetricBucket]) -> int:
-        """按窗口整体重写分组级快照，重复执行结果一致。"""
+    def replace_window(self, *, window_start: datetime, buckets: dict[tuple[str, int, str], MetricBucket]) -> int:
+        """按窗口整体重写分组级快照，键为「模式 × 分组 × 请求类型」，重复执行结果一致。"""
 
         self._session.execute(delete(GroupMetricSnapshot).where(GroupMetricSnapshot.window_start == window_start))
-        for (group_id, request_type), bucket in buckets.items():
+        for (mode, group_id, request_type), bucket in buckets.items():
             self._session.add(
                 GroupMetricSnapshot(
                     window_start=window_start,
                     token_group_id=group_id,
                     request_type=request_type,
+                    mode=mode,
                     succeeded_count=bucket.succeeded_count,
                     failed_count=bucket.failed_count,
                     refunded_count=bucket.refunded_count,
@@ -92,15 +163,21 @@ class SnapshotCrud:
             is not None
         )
 
-    def list_window(self, *, window_start: datetime) -> list[GroupMetricSnapshot]:
-        """读取单个窗口的全部分组快照。"""
+    def list_window(self, *, window_start: datetime, mode: str | None = None) -> list[GroupMetricSnapshot]:
+        """读取单个窗口的分组快照，可按数据模式过滤。"""
 
-        return list(
-            self._session.scalars(select(GroupMetricSnapshot).where(GroupMetricSnapshot.window_start == window_start))
-        )
+        statement = select(GroupMetricSnapshot).where(GroupMetricSnapshot.window_start == window_start)
+        if mode is not None:
+            statement = statement.where(GroupMetricSnapshot.mode == mode)
+        return list(self._session.scalars(statement))
 
     def list_range(
-        self, *, start_at: datetime, end_at: datetime, group_ids: list[int] | None = None
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        group_ids: list[int] | None = None,
+        mode: str | None = None,
     ) -> list[GroupMetricSnapshot]:
         """读取区间内的分组快照，可按分组过滤，按窗口与分组稳定排序。"""
 
@@ -110,6 +187,8 @@ class SnapshotCrud:
         )
         if group_ids is not None:
             statement = statement.where(GroupMetricSnapshot.token_group_id.in_(group_ids))
+        if mode is not None:
+            statement = statement.where(GroupMetricSnapshot.mode == mode)
         return list(
             self._session.scalars(
                 statement.order_by(GroupMetricSnapshot.window_start, GroupMetricSnapshot.token_group_id)
@@ -160,6 +239,7 @@ class SnapshotCrud:
                 UsageRecord.completed_at >= start_at,
                 UsageRecord.completed_at < end_at,
                 UsageRecord.status.in_(_TERMINAL_STATUSES),
+                UsageRecord.is_user_error.is_(False),
                 UsageRecord.token_group_id.is_not(None),
                 UsageRecord.request_type.in_(TRACKED_REQUEST_TYPES),
             )
@@ -185,7 +265,7 @@ def _to_bucket(row) -> MetricBucket:
     return MetricBucket(
         succeeded_count=int(row.succeeded_count or 0),
         failed_count=int(row.failed_count or 0),
-        refunded_count=int(row.refunded_count or 0),
+        refunded_count=int(getattr(row, "refunded_count", 0) or 0),
         total_duration_ms=int(row.total_duration_ms or 0),
         first_token_sum_ms=int(row.first_token_sum_ms or 0),
         first_token_count=int(row.first_token_count or 0),

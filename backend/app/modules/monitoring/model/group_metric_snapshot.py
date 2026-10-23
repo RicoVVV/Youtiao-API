@@ -23,10 +23,11 @@ class GroupMetricSnapshot(SQLModelBase, table=True):
     __tablename__ = "group_metric_snapshots"
     __table_args__ = (
         Index(
-            "uq_group_metric_snapshots_window_group_type",
+            "uq_group_metric_snapshots_window_group_type_mode",
             "window_start",
             "token_group_id",
             "request_type",
+            "mode",
             unique=True,
         ),
         Index("ix_group_metric_snapshots_group_window", "token_group_id", "window_start"),
@@ -55,6 +56,16 @@ class GroupMetricSnapshot(SQLModelBase, table=True):
         )
     )
     request_type: str = Field(sa_column=Column(String(64), nullable=False, comment="请求类型：text、image 或 video"))
+    mode: str = Field(
+        default="real",
+        sa_column=Column(
+            String(16),
+            nullable=False,
+            server_default="real",
+            index=True,
+            comment="数据模式：real 为用户真实请求，probe 为平台主动嗅探",
+        ),
+    )
     succeeded_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, comment="窗口内成功请求数"))
     failed_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, comment="窗口内失败请求数"))
     refunded_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, comment="窗口内退款请求数"))

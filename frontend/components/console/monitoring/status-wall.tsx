@@ -22,9 +22,9 @@ import {
   fmtRate,
   REQUEST_TYPES,
   TYPE_COLORS,
-  type GroupMetricItem,
   type RequestType,
   type TrendResponse,
+  type TrendSummary,
 } from "./types";
 import { useGroupMetricsList, type TrendGroup } from "./use-group-metrics";
 
@@ -226,8 +226,8 @@ function InlineMetric({ label, value }: { label: string; value: string }) {
 
 type TypeSection = {
   type: RequestType;
-  /** 汇总指标：优先取近 24h，无流量时退回最新窗口 */
-  summary: GroupMetricItem | null;
+  /** 汇总指标：与所选时长同一区间（趋势接口 summaries），无流量时为 null */
+  summary: TrendSummary | null;
   rates: (number | null)[];
   durations?: (number | null)[];
   firstTokens?: (number | null)[];
@@ -236,15 +236,12 @@ type TypeSection = {
 function GroupStatusCard({
   apiBase,
   group,
-  items,
   mode,
   reqType,
   hours,
 }: {
   apiBase: "" | "/admin";
   group: TrendGroup;
-  /** 该分组在列表接口里的全部行（latest + last_24h × 各类型） */
-  items: GroupMetricItem[];
   mode: "user" | "admin";
   reqType: string;
   hours: number;
@@ -278,20 +275,13 @@ function GroupStatusCard({
     load();
   }, [load]);
 
-  /** 按请求类型分段；只保留有流量（汇总或趋势任一）的类型 */
+  /** 按请求类型分段；只保留所选区间内有流量（汇总或趋势任一）的类型 */
   const sections = useMemo<TypeSection[]>(() => {
     const xLen = trend?.x_axis.length ?? 0;
     return REQUEST_TYPES.filter((tp) => reqType === "all" || tp === reqType)
       .map((tp) => {
-        const latest =
-          items.find((i) => i.request_type === tp && i.period === "latest") ??
-          null;
-        const day =
-          items.find(
-            (i) => i.request_type === tp && i.period === "last_24h"
-          ) ?? null;
         const summary =
-          day && day.sample_count > 0 ? day : latest && latest.sample_count > 0 ? latest : (day ?? latest);
+          (trend?.summaries ?? []).find((s) => s.request_type === tp) ?? null;
 
         const series = (trend?.series ?? []).filter(
           (s) => s.request_type === tp
@@ -314,7 +304,7 @@ function GroupStatusCard({
         };
       })
       .filter((s) => s.hasTraffic);
-  }, [items, trend, reqType]);
+  }, [trend, reqType]);
 
   /** 卡片右上角胶囊：取各类型中最差的健康度 */
   const worst = useMemo(() => {
@@ -416,10 +406,6 @@ function GroupStatusCard({
                     value={fmtMs(s.summary?.average_first_token_ms)}
                   />
                 )}
-                <InlineMetric
-                  label={t("monitoring.sampleLabel")}
-                  value={s.summary ? String(s.summary.sample_count) : "—"}
-                />
               </div>
 
               <BarRow
@@ -460,15 +446,15 @@ export function GroupStatusWall({
   /** 手动刷新：重挂载所有卡片强制重新拉取趋势 */
   const [nonce, setNonce] = useState(0);
 
-  const itemsByGroup = useMemo(() => {
-    const m = new Map<number, GroupMetricItem[]>();
-    for (const it of list.data?.items ?? []) {
-      const arr = m.get(it.group_id);
-      if (arr) arr.push(it);
-      else m.set(it.group_id, [it]);
+  /** 当前可见请求类型：由列表接口下发，未加载完成前用全量兜底 */
+  const visibleTypes = list.data?.request_types ?? REQUEST_TYPES;
+
+  /** 所选类型被可见性/模式调整踢出时回退到「全部」 */
+  useEffect(() => {
+    if (reqType !== "all" && !visibleTypes.includes(reqType as RequestType)) {
+      setReqType("all");
     }
-    return m;
-  }, [list.data]);
+  }, [reqType, visibleTypes]);
 
   const hoursLabel = (h: number) =>
     h > 24 && h % 24 === 0
@@ -485,9 +471,10 @@ export function GroupStatusWall({
           ariaLabel={t("monitoring.colType")}
           options={[
             { value: "all", label: t("monitoring.type.all") },
-            { value: "text", label: t("monitoring.type.text") },
-            { value: "image", label: t("monitoring.type.image") },
-            { value: "video", label: t("monitoring.type.video") },
+            ...visibleTypes.map((tp) => ({
+              value: tp,
+              label: t(`monitoring.type.${tp}`),
+            })),
           ]}
         />
         <PillGroup
@@ -542,7 +529,6 @@ export function GroupStatusWall({
               key={`${g.id}-${nonce}`}
               apiBase={apiBase}
               group={g}
-              items={itemsByGroup.get(g.id) ?? []}
               mode={mode}
               reqType={reqType}
               hours={Number(hours)}

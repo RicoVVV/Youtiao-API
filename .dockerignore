@@ -7,6 +7,7 @@ backend/.env
 __pycache__
 *.py[cod]
 media
+backend/data
 celerybeat-schedule
 frontend/node_modules
 frontend/.next

@@ -16,6 +16,7 @@ import os
 import re
 import socket
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
@@ -178,7 +179,7 @@ async def probe_stored_file(
     content_sha256 = await asyncio.to_thread(_sha256_file, path)
     duration: Decimal | None = None
     if category in {_VIDEO_CATEGORY, _AUDIO_CATEGORY}:
-        duration = _probe_duration(extras)
+        duration = _probe_duration(extras, category=category)
     return MaterialProbe(
         category=category,
         content_sha256=content_sha256,
@@ -375,7 +376,7 @@ async def _probe_media_streams(path: Path, *, declared: str, sniffed: str) -> tu
     return category, extras
 
 
-def _probe_duration(extras: dict[str, Any]) -> Decimal:
+def _probe_duration(extras: dict[str, Any], *, category: str) -> Decimal:
     settings = get_settings()
     raw = extras.get("duration")
     try:
@@ -385,7 +386,8 @@ def _probe_duration(extras: dict[str, Any]) -> Decimal:
     if not duration.is_finite() or duration <= 0:
         raise ValueError("输入素材时长无法确定")
     if duration > settings.video_material_max_video_seconds:
-        raise ValueError("输入视频时长超出限制")
+        label = "音频" if category == _AUDIO_CATEGORY else "视频"
+        raise ValueError(f"输入{label}时长超出限制")
     return duration.quantize(_AMOUNT_PRECISION, rounding=ROUND_CEILING)
 
 
@@ -419,12 +421,12 @@ async def _run_ffprobe(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, NotImplementedError) as exc:
         raise ValueError("服务端缺少媒体探测能力") from exc
     try:
-        stdout, _ = await asyncio.wait_for(
-            process.communicate(), timeout=settings.video_material_download_timeout_seconds
-        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=settings.video_material_probe_timeout_seconds)
     except TimeoutError as exc:
         process.kill()
-        await process.wait()
+        # 继续读取到 EOF 并关闭管道，避免被杀进程的 stdout/stderr 残留导致后续等待挂起。
+        with suppress(Exception):
+            await asyncio.wait_for(process.communicate(), timeout=5)
         raise ValueError("输入素材媒体解析超时") from exc
     if process.returncode != 0:
         raise ValueError("输入素材媒体解析失败")
@@ -463,7 +465,8 @@ def _image_dimensions(header: bytes) -> dict[str, Any]:
     settings = get_settings()
     dimensions = _parse_image_dimensions(header)
     if dimensions is None:
-        return {"width": None, "height": None}
+        # 无法解析尺寸就无法计算图片 token，必须拒绝而不是按 0 计费。
+        raise ValueError("无法解析输入图片尺寸")
     width, height = dimensions
     if width <= 0 or height <= 0 or width * height > settings.video_material_max_image_pixels:
         raise ValueError("输入图片像素超出限制")
