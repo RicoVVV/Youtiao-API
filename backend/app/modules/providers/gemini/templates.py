@@ -1,6 +1,12 @@
 """Gemini 原生文本与图像 Provider 模板。"""
 
-from app.modules.providers.openai_compatible.templates import _image_token_pricing_rules, _text_pricing_rules
+from typing import Any
+
+from app.modules.providers.openai_compatible.templates import (
+    _IMAGE_COUNT_UNIT_AMOUNT,
+    _image_token_pricing_rules,
+    _text_pricing_rules,
+)
 from app.modules.providers.templates import ProviderTemplate
 
 # 文本占位价：目录未命中时的兜底价，取 Gemini 现行目录最高档
@@ -84,4 +90,66 @@ GEMINI_IMAGE_DEFAULT_TEMPLATE = ProviderTemplate(
         text_chars_per_token=_IMAGE_TEXT_CHARS_PER_TOKEN,
         unknown_image_tiles_per_image=_IMAGE_UNKNOWN_TILES_PER_IMAGE,
     ),
+)
+
+
+def _image_request_pricing_rules(*, unit_amount: str) -> list[dict[str, Any]]:
+    """生成 Gemini 图片按次计费的默认规则，按 imageSize 档位计价并保留兜底档。
+
+    Gemini 的尺寸档位位于 ``generationConfig.imageConfig.imageSize``，由模板派生为
+    ``image_resolution_tier`` 后参与条件匹配；请求未携带该档位时由兜底档承接。
+    """
+
+    tiers = ("4K", "2K", "1K")
+    item = {
+        "label": "图片请求",
+        "position": 0,
+        "kind": "request_fixed",
+        "source_fields": [],
+        "free_quantity": 0,
+        "unit_amount": unit_amount,
+    }
+    rules = [
+        {
+            "name": f"{tier} 图片",
+            "conditions": [{"field": "image_resolution_tier", "operator": "eq", "value": tier}],
+            "items": [dict(item)],
+        }
+        for tier in tiers
+    ]
+    rules.append({"name": "未指定档位图片", "conditions": [], "items": [dict(item)]})
+    return rules
+
+
+# 同一 Gemini 图片端点的按次计费模板：请求契约与 token 模板一致，默认按 imageSize 档位
+# （1K/2K/4K）固定次数计费；创建模型时选择该模板即自动播种，无需手填定价规则。
+GEMINI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE = ProviderTemplate(
+    template_id="gemini_image_per_request_default",
+    provider_type="gemini",
+    label="Gemini（按次）",
+    model_type="image",
+    summary="Gemini 原生图像生成与图像编辑，按请求次数计费并支持 1K/2K/4K 档位。",
+    tags=["Gemini", "Nano Banana", "文生图", "图片编辑", "按次计费"],
+    provider_id="google",
+    provider_name="Google",
+    input_schema={
+        "type": "object",
+        "required": ["contents"],
+        "properties": {
+            "contents": {"type": "array", "minItems": 1},
+            "systemInstruction": {"type": "object"},
+            "generationConfig": {"type": "object"},
+            "safetySettings": {"type": "array"},
+            "tools": {"type": "array"},
+            "toolConfig": {"type": "object"},
+        },
+    },
+    example={
+        "contents": [
+            {"parts": [{"text": "一只戴墨镜的橘猫，电影感光影"}]},
+        ],
+        "generationConfig": {"imageConfig": {"imageSize": "2K"}},
+    },
+    derived_pricing_fields=[{"type": "image_resolution_tier", "size_source": "generationConfig.imageConfig.imageSize"}],
+    default_pricing_rules=_image_request_pricing_rules(unit_amount=_IMAGE_COUNT_UNIT_AMOUNT),
 )

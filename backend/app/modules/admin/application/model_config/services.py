@@ -441,9 +441,11 @@ class AdminModelConfigApplicationService:
         """在同一模型与令牌组内复制计费方案，并自动取用未被占用的优先级。"""
 
         rule_crud = PricingRuleCrud(self._session)
-        source = rule_crud.get(pricing_rule_id)
+        source = rule_crud.get_for_update(pricing_rule_id)
         if source is None:
             raise NotFoundError("价格规则不存在")
+        # 与新建规则保持一致的加锁顺序：先锁来源规则，再锁模型，串行化同模型内的优先级分配。
+        ModelCrud(self._session).get_for_update(source.model_id)
         rule = PricingRule(
             model_id=source.model_id,
             token_group_id=source.token_group_id,
@@ -500,9 +502,10 @@ class AdminModelConfigApplicationService:
         """在同一计费方案内复制修正项，并自动取用未被占用的优先级。"""
 
         modifier_crud = PricingModifierCrud(self._session)
-        source = modifier_crud.get(pricing_modifier_id)
+        source = modifier_crud.get_for_update(pricing_modifier_id)
         if source is None:
             raise NotFoundError("价格修正不存在")
+        PricingRuleCrud(self._session).get_for_update(source.pricing_rule_id)
         modifier = PricingModifier(
             pricing_rule_id=source.pricing_rule_id,
             name=_copy_name(
@@ -523,6 +526,7 @@ class AdminModelConfigApplicationService:
             active=source.active,
         )
         modifier_crud.add(modifier)
+        modifier_crud.flush()
         return {"id": str(modifier.id), "name": modifier.name, "priority": modifier.priority}
 
 
@@ -874,14 +878,17 @@ def _provider_summaries() -> list[dict[str, object]]:
 def _catalog_pricing_rules(match: CatalogMatch, template_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """把目录声明的公开单价覆盖到模板默认规则的对应计费项上。
 
-    文本模型按计费类别逐项覆盖模板默认单价；图片模型因为要改用按图片 token 计费，整条替换
-    模板默认的按次计费规则。目录未命中或未提供某计费类别的单价时保留模板默认单价。
+    文本模型按计费类别逐项覆盖模板默认单价；图片模型默认改用按图片 token 计费，但若所选模板
+    已声明按次/按张计费项（例如 OpenAI 按次模板），则保留模板默认的分档规则与单价。
+    目录未命中或未提供某计费类别的单价时保留模板默认单价。
     """
 
     entry = match.entry
     if entry is None:
         return template_rules
     if entry.model_type == "image":
+        if _declares_image_request_pricing(template_rules):
+            return template_rules
         return _image_pricing_rules(entry)
     amounts = {
         "input_text_tokens": entry.input_price,
@@ -897,6 +904,19 @@ def _catalog_pricing_rules(match: CatalogMatch, template_rules: list[dict[str, A
             if price is not None:
                 item["unit_amount"] = price
     return template_rules
+
+
+def _declares_image_request_pricing(template_rules: list[dict[str, Any]]) -> bool:
+    """判断模板默认规则是否按请求次数或输出张数计费。"""
+
+    request_kinds = {PricingItemKind.request_fixed.value, PricingItemKind.output_image_count.value}
+    return any(
+        item.get("kind") in request_kinds
+        for rule in template_rules
+        if isinstance(rule, dict)
+        for item in (rule.get("items") or [])
+        if isinstance(item, dict)
+    )
 
 
 def _image_pricing_rules(entry: ModelPricingEntry) -> list[dict[str, Any]]:
@@ -1487,6 +1507,8 @@ def _create_pricing_rule_for_model(session: Session, *, model: Model, payload: d
     item_payloads = payload.pop("items")
     payload.pop("priority", None)
     rule_crud = PricingRuleCrud(session)
+    # 锁定模型行以串行化同一模型下的规则写入，避免并发请求取到相同 priority。
+    ModelCrud(session).get_for_update(payload["model_id"])
     payload["priority"] = _next_priority_in_scope(
         rule_crud.list_in_scope(model_id=payload["model_id"], token_group_id=payload["token_group_id"]),
         conditional=bool(payload.get("conditions")),
@@ -1519,6 +1541,8 @@ def update_pricing_rule(session: Session, *, rule_id: UUID, **payload: Any) -> d
     payload.pop("priority", None)
     model_id = payload.get("model_id", rule.model_id)
     token_group_id = payload.get("token_group_id", rule.token_group_id)
+    # 先锁目标模型，再在目标分组内取号，避免并发移动方案时占用相同 priority。
+    model = _get_live_model_for_update(session, model_id)
     # 优先级只由服务端在同模型同分组内顺延；跨模型或分组移动方案时重新取号，避免占用目标范围已有值。
     priority = rule.priority
     if (model_id, token_group_id) != (rule.model_id, rule.token_group_id):
@@ -1541,7 +1565,6 @@ def update_pricing_rule(session: Session, *, rule_id: UUID, **payload: Any) -> d
             )
         },
     )
-    model = _get_live_model(session, candidate.model_id)
     item_crud = PricingItemCrud(session)
     existing_by_position = {item.position: item for item in item_crud.list_for_rule(rule.id)}
     candidate_items = _build_pricing_items(rule.id, item_payloads, existing_by_position)
@@ -1575,7 +1598,7 @@ def delete_pricing_rule(session: Session, *, rule_id: UUID) -> None:
 
 
 def create_pricing_modifier(session: Session, **payload: Any) -> dict[str, object]:
-    rule = PricingRuleCrud(session).get(payload["pricing_rule_id"])
+    rule = PricingRuleCrud(session).get_for_update(payload["pricing_rule_id"])
     if rule is None:
         raise NotFoundError("价格规则不存在")
     payload.pop("priority", None)
@@ -1610,6 +1633,10 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
         raise NotFoundError("价格修正不存在")
     payload.pop("priority", None)
     pricing_rule_id = payload.get("pricing_rule_id", modifier.pricing_rule_id)
+    # 锁定目标方案，串行化同一方案内的修正项取号，避免并发时占用相同 priority。
+    rule = PricingRuleCrud(session).get_for_update(pricing_rule_id)
+    if rule is None:
+        raise NotFoundError("价格规则不存在")
     # 修正项归属方案变化时在目标方案内重新顺延优先级，避免与已有修正项冲突。
     priority = modifier.priority
     if pricing_rule_id != modifier.pricing_rule_id:
@@ -1634,9 +1661,6 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
             )
         },
     )
-    rule = PricingRuleCrud(session).get(candidate.pricing_rule_id)
-    if rule is None:
-        raise NotFoundError("价格规则不存在")
     model = _get_live_model(session, rule.model_id)
     items = PricingItemCrud(session).list_for_rule(rule.id)
     validate_configuration(

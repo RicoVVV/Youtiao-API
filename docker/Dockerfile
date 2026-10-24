@@ -5,6 +5,8 @@ FROM python:3.11-slim AS runtime
 # 依赖源：默认使用腾讯云镜像，可通过 --build-arg 覆盖。
 ARG PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple
 ARG PIP_TRUSTED_HOST=mirrors.cloud.tencent.com
+# Debian 软件源镜像域名，默认腾讯云；置空则使用官方 deb.debian.org。
+ARG APT_MIRROR=mirrors.cloud.tencent.com
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -16,7 +18,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 视频与音频素材的流信息、时长计量依赖 ffprobe，slim 基础镜像默认不含 ffmpeg。
-RUN apt-get update \
+# 先将 Debian 源切到镜像站，再安装，避免从 deb.debian.org 拉包过慢。
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 

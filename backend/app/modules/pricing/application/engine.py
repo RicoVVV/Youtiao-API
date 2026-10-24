@@ -22,6 +22,7 @@ _INTERNAL_PRICING_FIELDS = {
     "input_image_count",
     "input_video_seconds",
     "image_pixel_count",
+    "image_resolution_tier",
     "prompt_tokens",
     "cache_write_tokens",
     "cached_tokens",

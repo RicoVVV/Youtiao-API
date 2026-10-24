@@ -264,7 +264,7 @@ MESSAGES_EN: dict[str, str] = {
     "图片 Token 计费项缺少每张图片 Token 估算参数": (
         "The image token pricing item is missing the per-image token estimation parameter"
     ),
-    "图片像素派生字段必须引用声明的字符串字段": ("Image pixel derived fields must reference a declared string field"),
+    "派生计费字段必须引用声明的字符串字段": ("Derived pricing fields must reference a declared string field"),
     "图片响应为空": "Image response is empty",
     "图片编辑仅支持图片类型文件": "Image editing only supports image files",
     "图片编辑必须提供输入图片": "Image editing requires at least one input image",
@@ -503,6 +503,15 @@ MESSAGES_EN: dict[str, str] = {
     "参考生视频": "Reference to video",
     "文生图": "Text to image",
     "图片编辑": "Image editing",
+    "按次计费": "Per-request billing",
+    "OpenAI（按次）": "OpenAI (per request)",
+    "Gemini（按次）": "Gemini (per request)",
+    "根据文本提示词生成图片并按请求次数计费，支持 1K/2K/4K 像素档位。": (
+        "Generate images from text prompts with per-request billing, supporting 1K, 2K, and 4K pixel tiers."
+    ),
+    "Gemini 原生图像生成与图像编辑，按请求次数计费并支持 1K/2K/4K 档位。": (
+        "Native Gemini image generation and editing with per-request billing and 1K, 2K, and 4K tiers."
+    ),
     "文本对话": "Text chat",
     "流式输出": "Streaming output",
     "视频任务": "Video tasks",

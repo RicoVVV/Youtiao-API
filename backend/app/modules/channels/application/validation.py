@@ -22,6 +22,7 @@ _INTERNAL_PRICING_FIELDS = {
     "input_image_count",
     "input_video_seconds",
     "image_pixel_count",
+    "image_resolution_tier",
     "prompt_tokens",
     "cache_write_tokens",
     "cached_tokens",
@@ -32,6 +33,7 @@ _INTERNAL_PRICING_FIELD_TYPES = {
     "input_image_count": "integer",
     "input_video_seconds": "number",
     "image_pixel_count": "integer",
+    "image_resolution_tier": "string",
     "prompt_tokens": "integer",
     "cache_write_tokens": "integer",
     "cached_tokens": "integer",
@@ -181,15 +183,19 @@ def _validate_derived_pricing_fields(
     for declaration in derived_pricing_fields:
         if not isinstance(declaration, dict) or set(declaration) != {"type", "size_source"}:
             raise ValueError("派生计费字段声明不合法")
-        if declaration["type"] != "image_pixel_count":
+        if declaration["type"] not in {"image_pixel_count", "image_resolution_tier"}:
             raise ValueError("派生计费字段类型不受支持")
         if declaration["type"] in seen_types:
             raise ValueError("派生计费字段类型不能重复")
         seen_types.add(declaration["type"])
-        size_source = declaration["size_source"]
-        source_rule = properties.get(size_source) if isinstance(size_source, str) else None
-        if not isinstance(source_rule, dict) or source_rule.get("type") != "string":
-            raise ValueError("图片像素派生字段必须引用声明的字符串字段")
+        source_path = declaration["size_source"]
+        if not isinstance(source_path, str) or not source_path:
+            raise ValueError("派生计费字段必须引用声明的字符串字段")
+        root_name = source_path.split(".", 1)[0]
+        source_rule = properties.get(root_name)
+        expected_type = "object" if "." in source_path else "string"
+        if not isinstance(source_rule, dict) or source_rule.get("type") != expected_type:
+            raise ValueError("派生计费字段必须引用声明的字符串字段")
 
 
 def _pricing_field_types(

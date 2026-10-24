@@ -22,6 +22,9 @@ _IMAGE_TEXT_CHARS_PER_TOKEN = "2"
 # 平台图片 Token 校验强制要求该参数，OpenAI 侧不会用到（只有 Gemini 按 tile 估算）。
 _IMAGE_UNKNOWN_TILES_PER_IMAGE = "4"
 
+# 图片按次计费的占位单价：1K/2K/4K 统一为 1 USD/次，管理员可在定价面板按档位调整。
+_IMAGE_COUNT_UNIT_AMOUNT = "1.000000"
+
 _VIDEO_OUTPUT_UNIT_AMOUNT = "0.100000"
 
 
@@ -73,6 +76,31 @@ def _image_token_pricing_rules(
             ],
         }
     ]
+
+
+def _image_request_pricing_rules(*, unit_amount: str) -> list[dict[str, Any]]:
+    """生成图片按次计费的默认规则，按输出像素分档并保留无条件兜底档。
+
+    每次请求固定计费一次，不依赖请求张数字段；像素档位由模板从 ``size`` 派生，
+    请求未携带尺寸时由兜底档承接，避免选不出计费方案。
+    """
+
+    tiers = (
+        ("4K 图片", {"field": "image_pixel_count", "operator": "gte", "value": 8000000}),
+        ("2K 图片", {"field": "image_pixel_count", "operator": "between", "value": [2000000, 7999999]}),
+        ("1K 图片", {"field": "image_pixel_count", "operator": "between", "value": [1, 1999999]}),
+    )
+    item = {
+        "label": "图片请求",
+        "position": 0,
+        "kind": "request_fixed",
+        "source_fields": [],
+        "free_quantity": 0,
+        "unit_amount": unit_amount,
+    }
+    rules = [{"name": name, "conditions": [condition], "items": [dict(item)]} for name, condition in tiers]
+    rules.append({"name": "未传尺寸图片", "conditions": [], "items": [dict(item)]})
+    return rules
 
 
 def _text_pricing_rules(
@@ -185,6 +213,38 @@ OPENAI_IMAGE_DEFAULT_TEMPLATE = ProviderTemplate(
         text_chars_per_token=_IMAGE_TEXT_CHARS_PER_TOKEN,
         unknown_image_tiles_per_image=_IMAGE_UNKNOWN_TILES_PER_IMAGE,
     ),
+)
+
+
+# 同一 OpenAI 图片端点的按次计费模板：请求契约与 token 模板一致，只把默认计费方案换成
+# 按输出像素分档的固定次数计费；创建模型时选择该模板即自动播种，无需手填定价规则。
+OPENAI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE = ProviderTemplate(
+    template_id="openai_image_per_request_default",
+    provider_type="openai_compatible",
+    label="OpenAI（按次）",
+    model_type="image",
+    summary="根据文本提示词生成图片并按请求次数计费，支持 1K/2K/4K 像素档位。",
+    tags=["文生图", "图片编辑", "按次计费"],
+    provider_id="openai",
+    provider_name="OpenAI",
+    input_schema={
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+            "prompt": {"type": "string", "minLength": 1},
+            "size": {"type": "string"},
+            "quality": {"type": "string", "enum": ["auto", "low", "medium", "high"]},
+            "response_format": {"type": "string", "enum": ["url", "b64_json"]},
+            "background": {"type": "string", "enum": ["auto", "transparent", "opaque"]},
+            "output_format": {"type": "string", "enum": ["png", "jpeg", "webp"]},
+        },
+    },
+    example={
+        "prompt": "一只戴墨镜的橘猫，电影感光影",
+        "size": "1024x1024",
+    },
+    derived_pricing_fields=[{"type": "image_pixel_count", "size_source": "size"}],
+    default_pricing_rules=_image_request_pricing_rules(unit_amount=_IMAGE_COUNT_UNIT_AMOUNT),
 )
 
 

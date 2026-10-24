@@ -757,11 +757,16 @@ class ImageGenerationApplicationService(_GenerationServiceBase):
                 continue
             derived_type = declaration.get("type")
             size_source = declaration.get("size_source")
-            if derived_type != "image_pixel_count" or not isinstance(size_source, str):
+            if not isinstance(size_source, str):
                 continue
-            pixel_count = _image_pixel_count(context.get(size_source))
-            if pixel_count is not None:
-                context[derived_type] = pixel_count
+            if derived_type == "image_pixel_count":
+                pixel_count = _image_pixel_count(context.get(size_source))
+                if pixel_count is not None:
+                    context[derived_type] = pixel_count
+            elif derived_type == "image_resolution_tier":
+                resolution_tier = _image_resolution_tier(_nested_field_value(context, size_source))
+                if resolution_tier is not None:
+                    context[derived_type] = resolution_tier
         return context
 
     async def generate_image(
@@ -1235,6 +1240,26 @@ def _image_pixel_count(size: object) -> int | None:
     if width <= 0 or height <= 0:
         return None
     return width * height
+
+
+def _nested_field_value(payload: dict[str, Any], path: str) -> Any:
+    """按点号路径读取嵌套字段，任一层缺失或非对象时返回空。"""
+
+    value: Any = payload
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _image_resolution_tier(value: object) -> str | None:
+    """把 Gemini 的 imageSize 归一为 1K/2K/4K 档位，无法识别时返回空。"""
+
+    if not isinstance(value, str):
+        return None
+    tier = value.strip().upper()
+    return tier if tier in {"1K", "2K", "4K"} else None
 
 
 def _derived_pricing_fields(contract: object) -> list[dict[str, Any]]:

@@ -20,6 +20,7 @@ from app.modules.providers.fal.templates import (
 from app.modules.providers.gemini.adapter import GeminiProvider
 from app.modules.providers.gemini.templates import (
     GEMINI_IMAGE_DEFAULT_TEMPLATE,
+    GEMINI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE,
     GEMINI_TEXT_DEFAULT_TEMPLATE,
 )
 from app.modules.providers.hook_minimax_h3.adapter import H3VideoProvider
@@ -29,6 +30,7 @@ from app.modules.providers.minimax_h3_official.templates import MINIMAX_H3_OFFIC
 from app.modules.providers.openai_compatible.adapter import OpenAICompatibleProvider
 from app.modules.providers.openai_compatible.templates import (
     OPENAI_IMAGE_DEFAULT_TEMPLATE,
+    OPENAI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE,
     OPENAI_TEXT_DEFAULT_TEMPLATE,
     OPENAI_VIDEO_DEFAULT_TEMPLATE,
 )
@@ -105,10 +107,12 @@ def get_provider_template_registry() -> ProviderTemplateRegistry:
             MINIMAX_H3_DEFAULT_TEMPLATE,
             MINIMAX_H3_OFFICIAL_DEFAULT_TEMPLATE,
             OPENAI_IMAGE_DEFAULT_TEMPLATE,
+            OPENAI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE,
             OPENAI_TEXT_DEFAULT_TEMPLATE,
             OPENAI_VIDEO_DEFAULT_TEMPLATE,
             GEMINI_TEXT_DEFAULT_TEMPLATE,
             GEMINI_IMAGE_DEFAULT_TEMPLATE,
+            GEMINI_IMAGE_PER_REQUEST_DEFAULT_TEMPLATE,
             ANTHROPIC_MESSAGES_DEFAULT_TEMPLATE,
             DASHSCOPE_DEFAULT_TEMPLATE,
             DASHSCOPE_VIDEO_DEFAULT_TEMPLATE,
