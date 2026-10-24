@@ -1632,7 +1632,7 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
     if modifier is None:
         raise NotFoundError("价格修正不存在")
     payload.pop("priority", None)
-    pricing_rule_id = payload.get("pricing_rule_id", modifier.pricing_rule_id)
+    pricing_rule_id = payload.get("pricing_rule_id") or modifier.pricing_rule_id
     # 锁定目标方案，串行化同一方案内的修正项取号，避免并发时占用相同 priority。
     rule = PricingRuleCrud(session).get_for_update(pricing_rule_id)
     if rule is None:
@@ -1649,7 +1649,6 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
         **{
             key: payload.get(key, getattr(modifier, key))
             for key in (
-                "pricing_rule_id",
                 "name",
                 "conditions",
                 "effect_type",
@@ -1660,6 +1659,7 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
                 "active",
             )
         },
+        pricing_rule_id=pricing_rule_id,
     )
     model = _get_live_model(session, rule.model_id)
     items = PricingItemCrud(session).list_for_rule(rule.id)
@@ -1676,6 +1676,8 @@ def update_pricing_modifier(session: Session, *, modifier_id: UUID, **payload: A
         model_type=model.model_type,
     )
     for key, value in payload.items():
+        if key == "pricing_rule_id" and value is None:
+            continue
         setattr(modifier, key, value)
     modifier.priority = priority
     return {"id": str(modifier.id)}

@@ -17,6 +17,7 @@ class PricingModifierCreateRequest(BaseModel):
 
 
 class PricingModifierUpdateRequest(PricingModifierCreateRequest):
+    pricing_rule_id: UUID | None = None
     pricing_modifier_id: UUID
 
 
