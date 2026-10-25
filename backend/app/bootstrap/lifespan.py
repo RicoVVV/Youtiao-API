@@ -20,7 +20,10 @@ from app.modules.monitoring.application.runtime import (
 )
 from app.modules.payment.application.admin.settings import PaymentSettingsRuntimeManager
 from app.modules.system_tasks.runtime import SystemTaskRuntime
-from app.modules.usage.application.runtime import UsageStatisticsSystemTaskRunner
+from app.modules.usage.application.runtime import (
+    UsageResponsePayloadPurgeSystemTaskRunner,
+    UsageStatisticsSystemTaskRunner,
+)
 from app.modules.video.application.tasks.runtime import VideoPollSystemTaskRunner
 
 
@@ -70,6 +73,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         [
             VideoPollSystemTaskRunner(),
             UsageStatisticsSystemTaskRunner(),
+            UsageResponsePayloadPurgeSystemTaskRunner(),
             GroupMonitorSystemTaskRunner(),
             GroupMonitorProbeSystemTaskRunner(),
             ServerMetricSystemTaskRunner(),

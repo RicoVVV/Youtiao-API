@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import get_settings
@@ -177,6 +178,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
         if _is_public_protocol_request(request):
             error_type = "authentication_error" if exc.status_code == 401 else "permission_error"
+            if exc.status_code == 413:
+                error_type = "invalid_request_error"
             return _protocol_error_response(
                 request,
                 status_code=exc.status_code,
@@ -381,6 +384,30 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=502,
             content=response_body(502, translate_error(exc), None, get_request_id()),
+            headers=_response_headers(),
+        )
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def handle_database_pool_timeout(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+        """连接池等待超时表示本进程并发已超出数据库池容量，单独记错误日志以便定位容量瓶颈。"""
+
+        logger.error(
+            "数据库连接池等待超时 method=%s path=%s error=%s",
+            request.method,
+            request.url.path,
+            exc,
+        )
+        if _is_public_protocol_request(request):
+            return _protocol_error_response(
+                request,
+                status_code=503,
+                message="Service is temporarily busy, please try again later",
+                error_type="server_error",
+                code="service_overloaded",
+            )
+        return JSONResponse(
+            status_code=503,
+            content=response_body(503, translate("服务繁忙，请稍后重试"), None, get_request_id()),
             headers=_response_headers(),
         )
 

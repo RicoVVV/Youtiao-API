@@ -67,6 +67,9 @@ from app.modules.user.crud.token_group_crud import TokenGroupCrud
 
 logger = logging.getLogger(__name__)
 
+_background_tasks: set[asyncio.Task[None]] = set()
+"""持有后台任务的强引用，避免事件循环只保存弱引用导致任务被提前回收。"""
+
 _TOKEN_KINDS = {
     PricingItemKind.input_text_tokens.value,
     PricingItemKind.cached_input_text_tokens.value,
@@ -78,9 +81,11 @@ _IMAGE_TOKEN_KINDS = {
 }
 _SUPPORTED_FIELD_TYPES = {"string", "integer", "number", "boolean", "array", "object"}
 _ALLOWED_IMAGE_FIELDS = {"image", "mask"}
-_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+# 与上游 GPT Image 编辑的单图限制对齐：官方要求参与编辑的图片与蒙版均小于 25 MB。
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _MAX_IMAGE_UPLOADS = 16
 _MAX_SSE_PENDING_BYTES = 1024 * 1024
+_IMAGE_DIMENSION_HEADER_BYTES = 24
 
 
 def _provider_application_error(error: ProviderError, resource: str) -> ApplicationError:
@@ -210,7 +215,7 @@ class _GenerationServiceBase:
         modifiers = list(configuration.modifiers)
         pricing_context = cls._pricing_context(normalized, derived_pricing_fields)
         pricing_context["input_image_dimensions"] = [
-            _image_dimensions(upload.content) for upload in uploads if upload.field_name in _ALLOWED_IMAGE_FIELDS
+            _upload_image_dimensions(upload) for upload in uploads if upload.field_name in _ALLOWED_IMAGE_FIELDS
         ]
         created_at = datetime.now(UTC)
         route = None
@@ -282,7 +287,9 @@ class _GenerationServiceBase:
             )
             reserved_amount = decision.amount
         resource_id = uuid4()
-        reserve_task_concurrency(sync_session, task_id=resource_id, user_id=user_id, model_id=model.id)
+        concurrency_leased = reserve_task_concurrency(
+            sync_session, task_id=resource_id, user_id=user_id, model_id=model.id
+        )
         billing = GenerationBilling(
             user_id=user_id,
             access_token_id=access_token_id,
@@ -307,6 +314,7 @@ class _GenerationServiceBase:
             items=list(plan_items),
             modifiers=list(plan_modifiers),
             allowed_fields=list(model.pricing_fields),
+            concurrency_leased=concurrency_leased,
         )
         if not postpaid:
             UsageApplicationService(sync_session).create_reserved(
@@ -377,12 +385,17 @@ class _GenerationServiceBase:
                 is_user_error,
             )
         if record_outcome and (success or channel_failure):
-            await asyncio.to_thread(
-                _record_runtime_outcome,
-                prepared,
-                success=success,
-                latency_ms=first_token_duration_ms or duration_ms or 0,
+            # 渠道反馈只是调度遥测，不能阻塞结算收尾：改为后台任务，避免千级并发时挤占线程池。
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    _record_runtime_outcome,
+                    prepared,
+                    success=success,
+                    latency_ms=first_token_duration_ms or duration_ms or 0,
+                )
             )
+            _background_tasks.add(task)
+            task.add_done_callback(_release_runtime_outcome_task)
         if channel_error is not None:
             try:
                 await auto_disable_channel_if_needed(
@@ -419,6 +432,14 @@ def _record_runtime_outcome(prepared: PreparedGeneration, *, success: bool, late
         )
     except Exception:
         logger.warning("渠道运行时反馈写入失败 route_id=%s", prepared.route_id, exc_info=True)
+
+
+def _release_runtime_outcome_task(task: asyncio.Task[None]) -> None:
+    """回收后台反馈任务的强引用，并消费其异常，避免关闭时出现未取回异常告警。"""
+
+    _background_tasks.discard(task)
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.warning("渠道运行时反馈任务失败", exc_info=error)
 
 
 def _finalize_sync(
@@ -463,7 +484,8 @@ def _finalize_sync(
                 upstream_response_payload=upstream_payload,
                 is_user_error=is_user_error,
             )
-        release_task_concurrency(sync_session, task_id=billing.resource_id)
+        if billing.concurrency_leased:
+            release_task_concurrency(sync_session, task_id=billing.resource_id)
         sync_session.commit()
     except Exception:
         sync_session.rollback()
@@ -723,6 +745,15 @@ def _image_dimensions(content: bytes) -> tuple[int, int] | None:
         height = int.from_bytes(content[8:10], "little")
         return (width, height) if width > 0 and height > 0 else None
     return None
+
+
+def _upload_image_dimensions(upload: ProviderUpload) -> tuple[int, int] | None:
+    """只读取图片头部判断尺寸，避免为计量把整张图片读入内存。"""
+
+    upload.stream.seek(0)
+    header = upload.stream.read(_IMAGE_DIMENSION_HEADER_BYTES)
+    upload.stream.seek(0)
+    return _image_dimensions(header)
 
 
 def _image_output_count(context: dict[str, Any], upstream_payload: dict[str, Any] | None) -> int:
@@ -1310,7 +1341,7 @@ def _validate_image_uploads(uploads: list[ProviderUpload]) -> None:
         content_type = upload.content_type or ""
         if content_type != "application/octet-stream" and not content_type.startswith("image/"):
             raise ValidationError("图片编辑仅支持图片类型文件")
-        if len(upload.content) > _MAX_UPLOAD_BYTES:
+        if upload.size > _MAX_UPLOAD_BYTES:
             raise ValidationError("图片编辑输入文件超出大小限制")
     if image_count == 0:
         raise ValidationError("图片编辑必须提供输入图片")
@@ -1567,8 +1598,14 @@ def _consume_stream_usage(buffer: bytes, chunk: bytes) -> tuple[bytes, dict[str,
 
 
 def _usage_from_sse_line(line: bytes) -> dict[str, Any] | None:
-    """从单条 SSE 数据行中提取 usage 对象，非数据行或非法 JSON 返回 None。"""
+    """从单条 SSE 数据行中提取 usage 对象，非数据行或非法 JSON 返回 None。
 
+    先用字节子串过滤：普通 token 增量占绝大多数；OpenAI 兼容流还会在每个 chunk 带 ``"usage":null``，
+    这两类都不需要 JSON 解析。含真实 usage 的行一定不包含 null 标记，因此过滤不会漏计费。
+    """
+
+    if b"usage" not in line or b'"usage":null' in line or b'"usage": null' in line:
+        return None
     payload = _sse_payload(line)
     if isinstance(payload, dict) and isinstance(payload.get("usage"), dict):
         return payload["usage"]

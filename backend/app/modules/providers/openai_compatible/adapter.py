@@ -143,13 +143,17 @@ class OpenAICompatibleProvider:
     async def edit_image(
         self, request_body: dict[str, Any], uploads: list[ProviderUpload], *, timeout: float | None = None
     ) -> dict[str, Any]:
-        """以 multipart 转发输入图片并返回上游图片编辑响应体。"""
+        """以 multipart 流式转发输入图片并返回上游图片编辑响应体。
+
+        文件对象由 httpx 按 64 KB 分块读取并计算 Content-Length，上游收到的是定长 multipart，
+        与把字节一次性放进内存时的请求形态一致。
+        """
 
         self.validate_image_request(request_body)
         files = [
             (
                 "image[]" if upload.field_name == "image" else upload.field_name,
-                (upload.filename, upload.content, upload.content_type),
+                (upload.filename, upload.stream, upload.content_type),
             )
             for upload in uploads
         ]

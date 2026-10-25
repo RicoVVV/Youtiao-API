@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.database import get_session_factory
 from app.modules.system_tasks.application.services import AsyncSystemTaskApplicationService
+from app.modules.usage.application.services import UsageApplicationService
 from app.modules.usage.application.statistics_services import UsageStatisticsApplicationService
 
 
@@ -27,3 +28,22 @@ class UsageStatisticsSystemTaskRunner:
             rows = UsageStatisticsApplicationService(session).rebuild_recent_daily_statistics()
             session.commit()
             return {"statistics_rows": rows}
+
+
+class UsageResponsePayloadPurgeSystemTaskRunner:
+    """负责按日清空超期用量响应体，任务以日期为活动键保证每日唯一。"""
+
+    task_type = "usage_response_payload_purge"
+
+    async def schedule(self, service: AsyncSystemTaskApplicationService) -> None:
+        purge_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        await service.enqueue(task_type=self.task_type, active_key=f"{self.task_type}:{purge_date}")
+
+    async def run(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._purge)
+
+    @staticmethod
+    def _purge() -> dict[str, int]:
+        with get_session_factory()() as session:
+            cleared = UsageApplicationService(session).purge_expired_response_payloads()
+            return {"usage_records": cleared}

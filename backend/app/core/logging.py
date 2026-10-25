@@ -8,6 +8,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.config import get_settings
+
 _request_id: ContextVar[str | None] = ContextVar("log_request_id", default=None)
 _standard_record_fields = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
 _ignored_record_fields = {"color_message", "message", "asctime"}
@@ -19,6 +21,10 @@ _level_colors = {
     logging.CRITICAL: "\033[41;97m",
 }
 _color_reset = "\033[0m"
+# 出口级兜底：单条日志超过该长度时只保留基础字段与预览，避免巨量内容进入 stdout 与容器日志。
+_MAX_LOG_LINE_CHARS = 16384
+_MAX_LOG_MESSAGE_CHARS = 512
+_MAX_LOG_PREVIEW_CHARS = 2048
 
 
 def bind_request_id(request_id: str) -> Any:
@@ -40,7 +46,7 @@ def get_log_request_id() -> str | None:
 
 
 class JsonFormatter(logging.Formatter):
-    """将标准日志记录转换为单行 JSON。"""
+    """将标准日志记录转换为单行 JSON，并对超长记录做出口级截断。"""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
@@ -60,7 +66,26 @@ class JsonFormatter(logging.Formatter):
         )
         if record.exc_info:
             payload["exception"] = "".join(traceback.format_exception(*record.exc_info))
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        rendered = json.dumps(payload, ensure_ascii=False, default=str)
+        if len(rendered) <= _MAX_LOG_LINE_CHARS:
+            return rendered
+        return _truncated_log(payload, rendered)
+
+
+def _truncated_log(payload: dict[str, object], rendered: str) -> str:
+    """超长日志的兜底形态：保留基础字段与序列化内容前缀，避免单条记录占用数十 MB。"""
+
+    summary: dict[str, object] = {
+        key: payload[key] for key in ("timestamp", "level", "logger", "request_id") if key in payload
+    }
+    summary["message"] = str(payload["message"])[:_MAX_LOG_MESSAGE_CHARS]
+    summary["log_truncated"] = True
+    summary["log_length"] = len(rendered)
+    # 预览按剩余空间的一半截断：JSON 转义最多让字符长度翻倍，留足余量才能保证结果不超上限。
+    remaining = _MAX_LOG_LINE_CHARS - len(json.dumps(summary, ensure_ascii=False, default=str)) - 64
+    if preview_size := min(remaining // 2, _MAX_LOG_PREVIEW_CHARS):
+        summary["preview"] = rendered[:preview_size]
+    return json.dumps(summary, ensure_ascii=False, default=str)
 
 
 class ConsoleColorFormatter(logging.Formatter):
@@ -79,6 +104,8 @@ class ConsoleColorFormatter(logging.Formatter):
         if extras:
             rendered = " ".join(f"{key}={value}" for key, value in extras.items())
             message = f"{message} {rendered}"
+        if len(message) > _MAX_LOG_LINE_CHARS:
+            message = f"{message[:_MAX_LOG_PREVIEW_CHARS]}…[truncated {len(message) - _MAX_LOG_PREVIEW_CHARS} chars]"
         color = _level_colors.get(record.levelno)
         return f"{color}{message}{_color_reset}" if color else message
 
@@ -106,7 +133,12 @@ def configure_logging() -> None:
     handler.setFormatter(formatter)
     handler.addFilter(RequestContextFilter())
     logging.basicConfig(level=level, handlers=[handler])
-    for logger_name in ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi", "starlette"):
+    # 生产环境访问日志由 nginx 记录：应用侧再记一份会重复，还会把回调 query 中的签名写盘。
+    access_level = logging.WARNING if get_settings().is_production else level
+    for logger_name in ("uvicorn", "uvicorn.error", "fastapi", "starlette"):
         managed_logger = logging.getLogger(logger_name)
         managed_logger.propagate = True
         managed_logger.setLevel(level)
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.propagate = True
+    access_logger.setLevel(access_level)

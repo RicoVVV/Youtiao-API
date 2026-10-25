@@ -23,23 +23,35 @@ class BillingApplicationService:
         self._wallets = WalletApplicationService(session)
 
     def adjust_balance(self, *, user_id: UUID, admin_id: UUID, amount: Decimal, reason: str | None = None) -> dict:
-        if amount <= 0:
-            raise ValidationError("授予金额必须为正数")
+        """按金额符号调整余额：正数入账，负数扣减，并写入管理员调整记录。"""
+
+        if amount == 0:
+            raise ValidationError("调整金额不能为 0")
+        reason_text = reason or "管理员余额调整"
         try:
-            record = self._wallets.grant(
-                user_id=user_id,
-                amount=amount,
-                record_type=BalanceRecordType.admin_grant,
-                reason=reason or "管理员余额调整",
-                operator_id=admin_id,
-            )
+            if amount > 0:
+                record = self._wallets.grant(
+                    user_id=user_id,
+                    amount=amount,
+                    record_type=BalanceRecordType.admin_grant,
+                    reason=reason_text,
+                    operator_id=admin_id,
+                )
+            else:
+                record = self._wallets.deduct(
+                    user_id=user_id,
+                    amount=-amount,
+                    record_type=BalanceRecordType.admin_grant,
+                    reason=reason_text,
+                    operator_id=admin_id,
+                )
             self._crud.flush()
             adjustment = self._crud.add_adjustment(
                 BillingAdjustment(
                     user_id=user_id,
                     admin_id=admin_id,
                     amount=amount,
-                    reason=reason or "管理员余额调整",
+                    reason=reason_text,
                     balance_record_id=record.id,
                 )
             )

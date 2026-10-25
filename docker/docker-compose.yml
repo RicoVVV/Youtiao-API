@@ -74,7 +74,8 @@ services:
       VIDEO_RESULT_STORAGE_DIR: /app/media/video-results
       # 支付回调公网地址（主站 HTTPS 域名），由 docker/.env 注入，留空时使用相对配置。
       PAYMENT_CALLBACK_BASE_URL: ${PAYMENT_CALLBACK_BASE_URL:-}
-    command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-"]
+    # graceful-timeout 与 timeout 对齐：max-requests 触发的优雅重启不能截断在途的流式/视频请求。
+    command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "3600", "--max-requests", "20000", "--max-requests-jitter", "2000", "--graceful-timeout", "3600", "--error-logfile", "-"]
     volumes:
       - media_data:/app/media
       # 服务器资源监控：宿主 procfs 用于 CPU、内存、负载与网络计数，
@@ -92,6 +93,23 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    # 容器内存上限：worker 失控时由容器自身重启，避免拖垮整机 postgres/redis/frontend。
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+    # 上游连接池上调后单进程句柄需求增加；容器默认 soft nofile 偏低会直接 EMFILE。
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # 日志只用于 Dozzle 实时查看，不做长期留存：单文件 10MB、只保留 1 个，滚动即覆盖。
+    # 注意 Dozzle 读取的就是 docker 持久化的容器日志，改成 driver: none 会看不到任何日志。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
     restart: unless-stopped
 
   frontend:
@@ -122,17 +140,30 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     volumes:
+      # 主配置：覆盖官方默认的每 worker 1024 条连接上限，否则千级并发先卡在网关。
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - nginx_cache:/var/cache/nginx
     depends_on:
       frontend:
         condition: service_healthy
+    # worker_connections 上调后每个 worker 都需要更多句柄，容器默认 soft nofile 偏低。
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 10s
+    # 日志只用于 Dozzle 实时查看，不做长期留存：单文件 10MB、只保留 1 个，滚动即覆盖。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
     restart: unless-stopped
 
 volumes:

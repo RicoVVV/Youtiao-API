@@ -5,6 +5,7 @@
 始终按字节流下发（外部直链交付时由平台反代上游），公开下载接口对这类成品重定向到上游地址。
 """
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
@@ -17,6 +18,7 @@ from app.core.errors import ValidationError
 from app.core.protocols import OPENAI_VIDEO_PROTOCOL
 from app.modules.video.api.schemas import OpenAIVideoCreateRequest, OpenAIVideoId, OpenAIVideoResponse
 from app.modules.video.application.tasks.async_runtime import AsyncVideoApplicationService
+from app.web.request_body import read_json_body
 
 router = APIRouter(prefix=OPENAI_VIDEO_PROTOCOL.operation("create").path, tags=["视频"])
 
@@ -27,8 +29,10 @@ async def create_video(
     token_authorization: Annotated[TokenAuthorizationContext, Depends(require_token_group)],
 ) -> OpenAIVideoResponse:
     if request.headers.get("content-type", "").split(";", 1)[0] == "application/json":
+        # 视频路径的网关上限需容纳素材上传，因此 JSON 体在应用层单独限制，避免大体积 JSON 驻留内存。
+        raw_body = await read_json_body(request)
         try:
-            raw_payload = await request.json()
+            raw_payload = json.loads(raw_body)
         except ValueError as exc:
             raise ValidationError("请求体不是合法 JSON") from exc
         if not isinstance(raw_payload, dict):

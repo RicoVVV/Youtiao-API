@@ -82,6 +82,35 @@ class WalletApplicationService:
             )
         )
 
+    def deduct(
+        self,
+        *,
+        user_id: UUID,
+        amount: Decimal,
+        record_type: BalanceRecordType,
+        reason: str,
+        operator_id: UUID | None = None,
+    ) -> BalanceRecord:
+        """扣减余额并写入一条负向余额明细，余额不足时拒绝且不产生任何写入。"""
+        if amount <= 0:
+            raise ValidationError("扣减金额必须为正数")
+        wallet = self._crud.debit_if_sufficient(user_id, amount)
+        if wallet is None:
+            if self._crud.get_wallet_by_user_id(user_id) is None:
+                raise ValidationError("用户钱包不存在")
+            raise ValidationError("扣减金额不能超过当前余额")
+        return self._crud.add_balance_record(
+            BalanceRecord(
+                user_id=user_id,
+                change_amount=-amount,
+                balance_before=wallet.balance + amount,
+                balance_after=wallet.balance,
+                record_type=record_type,
+                reason=reason,
+                operator_id=operator_id,
+            )
+        )
+
     def reserve_usage_balance(self, *, user_id: UUID, usage_record_id: UUID, amount: Decimal, reason: str) -> Wallet:
         """原子扣减余额并写入关联使用记录的扣费明细，返回扣减后的钱包。"""
         if amount <= 0:

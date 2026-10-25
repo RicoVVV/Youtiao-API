@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from uuid import uuid4
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.i18n import (
@@ -111,11 +111,22 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             reset_locale(locale_token)
 
     async def _wrap_json_response(self, request: Request, response, request_id: str):
-        """为非探针 JSON 响应添加统一信封，文件流和文档等非 JSON 响应保持原样。"""
+        """为非探针 JSON 响应添加统一信封，公开协议面与流式响应原样透传。"""
 
-        if request.url.path in {"/api/health", "/api/openapi.json"} or "application/json" not in response.headers.get(
-            "content-type", ""
-        ):
+        path = request.url.path
+        if path in {"/api/health", "/api/openapi.json"}:
+            return response
+        # 公开协议面不参与信封包装，重新解析再序列化只会成倍放大内存，对流式响应还会攒完全部内容。
+        if is_public_protocol_path(path):
+            # 错误响应体积小：仅取回原始字节供访问日志提取失败原因，成功响应仍原样直通。
+            if response.status_code < 400 or "application/json" not in response.headers.get("content-type", ""):
+                return response
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            headers = {key: value for key, value in response.headers.items() if key.lower() != "content-length"}
+            return Response(content=body, status_code=response.status_code, headers=headers)
+        if response.headers.get("x-accel-buffering", "").lower() == "no":
+            return response
+        if "application/json" not in response.headers.get("content-type", ""):
             return response
         body = b"".join([chunk async for chunk in response.body_iterator])
         try:
@@ -123,8 +134,6 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         except json.JSONDecodeError:
             return response
         headers = {key: value for key, value in response.headers.items() if key.lower() != "content-length"}
-        if is_public_protocol_path(request.url.path):
-            return JSONResponse(status_code=response.status_code, content=data, headers=headers)
         if isinstance(data, dict) and {"code", "message", "data", "request_id"} <= data.keys():
             return JSONResponse(status_code=response.status_code, content=data, headers=headers)
         return JSONResponse(

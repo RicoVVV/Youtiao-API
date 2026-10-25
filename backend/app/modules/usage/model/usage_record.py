@@ -10,7 +10,20 @@ from app.core.database import SQLModelBase
 
 if TYPE_CHECKING:
     from app.modules.user.model.user import User
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship
 
@@ -28,6 +41,14 @@ class UsageRecord(SQLModelBase, table=True):
         Index("ix_usage_records_user_created_at", "user_id", "created_at"),
         Index("ix_usage_records_resource", "resource_type", "resource_id"),
         Index("ix_usage_records_channel_created_at", "channel_id", "created_at"),
+        Index("ix_usage_records_created_at", "created_at"),
+        # 保留期清理只关心仍带响应体的记录；部分索引让“已无待清理记录”的探测代价恒定，
+        # 否则每日任务都要把全部历史区间扫一遍才能确认无事可做。
+        Index(
+            "ix_usage_records_pending_response",
+            "created_at",
+            postgresql_where=text("public_response_payload IS NOT NULL OR upstream_response_payload IS NOT NULL"),
+        ),
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     created_at: datetime | None = Field(

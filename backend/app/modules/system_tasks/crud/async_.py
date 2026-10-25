@@ -10,6 +10,7 @@ from app.modules.system_tasks.model.system_task import SystemTask, SystemTaskSta
 
 ACTIVE_KEY_RETAINING_TASK_TYPES = (
     "usage_statistics_rebuild",
+    "usage_response_payload_purge",
     "group_monitor_aggregate",
     "server_metric_collect",
 )

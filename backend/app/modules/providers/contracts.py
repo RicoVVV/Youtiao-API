@@ -6,7 +6,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, BinaryIO, Protocol
 
 __all__ = [
     "CreateVideoCommand",
@@ -196,13 +196,15 @@ class VideoProvider(Protocol):
 class ProviderUpload:
     """同步生成请求内需要转发给上游的二进制文件。
 
-    ``field_name`` 为上游 multipart 字段名（如 ``image``、``mask``）；``content`` 已在内存中，
-    不落地磁盘，仅供单次同步请求转发使用。
+    ``field_name`` 为上游 multipart 字段名（如 ``image``、``mask``）；``stream`` 为可 seek 的文件对象
+    （Starlette 的 ``UploadFile.file``），转发时由 httpx 原地分块读取，不复制进内存；``size`` 为解析阶段
+    得到的字节数，用于大小校验与计量，避免为了取长度把内容读出来。
     """
 
     field_name: str
     filename: str
-    content: bytes
+    stream: BinaryIO
+    size: int
     content_type: str
 
 

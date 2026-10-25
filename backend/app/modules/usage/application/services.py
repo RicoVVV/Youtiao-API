@@ -1,7 +1,7 @@
 """使用记录应用服务，协调调用审计与钱包余额变化。"""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -15,6 +15,12 @@ from app.modules.wallet.application.services import WalletApplicationService
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
+
+_RESPONSE_PAYLOAD_PURGE_BATCH_SIZE = 2000
+"""单批清空的响应体条数，避免长事务与大范围行锁。"""
+
+_RESPONSE_PAYLOAD_PURGE_MAX_BATCHES = 50
+"""单次运行最多处理的批数，限制系统任务占用时间，剩余积压留到下次运行继续。"""
 
 
 class UsageApplicationService:
@@ -390,6 +396,29 @@ class UsageApplicationService:
             )
         except Exception:
             logger.exception("余额预警校验失败 user_id=%s", user_id)
+
+    def purge_expired_response_payloads(self) -> int:
+        """清空超过保留期的响应体，返回清空条数；请求体与计费字段长期保留。
+
+        只为控制历史 JSONB 体积，不删除记录本身（余额流水以 RESTRICT 引用用量明细）。
+        分批提交，单次运行有批数上限，历史积压由每日任务逐步消化。
+        """
+
+        settings = get_settings()
+        cursor_at = datetime.now(UTC) - timedelta(days=settings.usage_record_response_retention_days)
+        cursor_id: UUID | None = None
+        cleared = 0
+        for _ in range(_RESPONSE_PAYLOAD_PURGE_MAX_BATCHES):
+            rows = self._crud.list_expired_response_payloads(
+                before=cursor_at, before_id=cursor_id, limit=_RESPONSE_PAYLOAD_PURGE_BATCH_SIZE
+            )
+            if not rows:
+                break
+            self._crud.clear_response_payloads(record_ids=[record_id for record_id, _ in rows])
+            cursor_at, cursor_id = rows[-1][1], rows[-1][0]
+            self._session.commit()
+            cleared += len(rows)
+        return cleared
 
     def list_owned(
         self, *, range_name: str | None, start_at: datetime | None, end_at: datetime | None, **kwargs

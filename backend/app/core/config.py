@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     database_async_max_overflow: int = Field(default=6, ge=0)
     database_pool_timeout_seconds: int = Field(default=10, ge=1)
     database_pool_recycle_seconds: int = Field(default=1800, ge=1)
-    http_max_connections: int = Field(default=32, ge=1)
-    http_max_keepalive_connections: int = Field(default=16, ge=0)
+    http_max_connections: int = Field(default=256, ge=1)
+    http_max_keepalive_connections: int = Field(default=64, ge=0)
     provider_read_timeout_seconds: int = Field(default=1800, ge=1)
     routing_runtime_enabled: bool = True
     """渠道运行时调度总开关；关闭后回退为静态权重加权随机且不熔断。"""
@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     # 支付回调对外基础地址；留空表示未配置，由部署环境按实际公网域名覆盖。
     payment_callback_base_url: str = ""
     payment_settings_sync_interval_seconds: int = Field(default=60, ge=5, le=3600)
+
+    usage_record_response_retention_days: int = Field(default=90, ge=1, le=3650)
+    """用量明细响应体的保留天数；到期后清空响应体以控制 JSONB 体积，请求体长期保留以便复现问题。"""
 
     monitoring_snapshot_retention_days: int = Field(default=30, ge=1, le=365)
     """分组监控 5 分钟粒度快照的保留天数。"""

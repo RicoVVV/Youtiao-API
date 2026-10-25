@@ -5,6 +5,7 @@
 """
 
 import ssl
+import threading
 from functools import lru_cache
 
 import httpx
@@ -12,9 +13,10 @@ import httpx
 from app.core.config import get_settings
 
 KEEPALIVE_EXPIRY_SECONDS = 30.0
-CONNECT_TIMEOUT_SECONDS = 120.0
+# 建连与取连接都快速失败：慢上游不应长时间占住 worker，排队超过 20s 说明容量不足，直接报错更可控。
+CONNECT_TIMEOUT_SECONDS = 15.0
 WRITE_TIMEOUT_SECONDS = 30.0
-POOL_TIMEOUT_SECONDS = 120.0
+POOL_TIMEOUT_SECONDS = 20.0
 
 _TLS_MAX_VERSIONS = {"1.2": ssl.TLSVersion.TLSv1_2, "1.3": ssl.TLSVersion.TLSv1_3}
 """渠道可收敛的最高 TLS 版本。
@@ -124,6 +126,9 @@ def get_http_client(transport: httpx.BaseTransport | None = None) -> httpx.Clien
 _cached_async_clients: dict[str | None, httpx.AsyncClient] = {}
 """当前进程共享的异步客户端，按渠道要求的最高 TLS 版本区分，未配置版本时以 ``None`` 为键。"""
 
+_async_clients_lock = threading.Lock()
+"""保护异步客户端的惰性创建，避免并发首个请求各建一个连接池后互相覆盖。"""
+
 
 def get_async_http_client(
     transport: httpx.AsyncBaseTransport | None = None, tls_max_version: str | None = None
@@ -143,10 +148,11 @@ def get_async_http_client(
 
     if transport is not None:
         return _create_async_http_client(transport=transport, tls_max_version=tls_max_version)
-    client = _cached_async_clients.get(tls_max_version)
-    if client is None:
-        client = _create_async_http_client(tls_max_version=tls_max_version)
-        _cached_async_clients[tls_max_version] = client
+    with _async_clients_lock:
+        client = _cached_async_clients.get(tls_max_version)
+        if client is None:
+            client = _create_async_http_client(tls_max_version=tls_max_version)
+            _cached_async_clients[tls_max_version] = client
     return client
 
 
@@ -166,6 +172,8 @@ def close_http_client() -> None:
 async def close_async_http_client() -> None:
     """关闭全部已缓存的共享异步客户端（含各 TLS 版本变体）并清除缓存。"""
 
-    for client in _cached_async_clients.values():
+    with _async_clients_lock:
+        clients = list(_cached_async_clients.values())
+        _cached_async_clients.clear()
+    for client in clients:
         await client.aclose()
-    _cached_async_clients.clear()

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
-from threading import Event, Lock
+from threading import Lock
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -106,10 +106,16 @@ class GenerationConfigurationSnapshot:
 
 
 class RoutingSnapshotStore:
+    """进程内路由快照缓存。
+
+    调用方位于事件循环线程（``AsyncSession.run_sync`` 的 greenlet）内，因此缓存未命中时**不能**用
+    ``threading.Event.wait()`` 等待其他请求加载：loader 的数据库 I/O 需要事件循环才能完成，阻塞等待会让
+    整个 worker 互锁。这里改为未命中即自行加载（只读且幂等），并用 generation 阻止失效前的旧结果回写。
+    """
+
     def __init__(self) -> None:
         self._lock = Lock()
         self._snapshots: dict[tuple[UUID, tuple[int, ...]], tuple[RoutableChannelBinding, ...]] = {}
-        self._loading: dict[tuple[UUID, tuple[int, ...]], Event] = {}
         self._generation = 0
 
     def get_or_load(
@@ -120,39 +126,16 @@ class RoutingSnapshotStore:
         loader: Callable[[], list[RoutableChannelBinding]],
     ) -> list[RoutableChannelBinding]:
         key = model_id, tuple(group_ids)
-        while True:
-            with self._lock:
-                snapshot = self._snapshots.get(key)
-                if snapshot is not None:
-                    return list(snapshot)
-                loading = self._loading.get(key)
-                if loading is None:
-                    loading = Event()
-                    self._loading[key] = loading
-                    generation = self._generation
-                    is_loader = True
-                else:
-                    is_loader = False
-            if not is_loader:
-                loading.wait()
-                continue
-            try:
-                loaded = tuple(loader())
-            except Exception:
-                with self._lock:
-                    if self._loading.get(key) is loading:
-                        self._loading.pop(key)
-                        loading.set()
-                raise
-            with self._lock:
-                if self._generation == generation:
-                    self._snapshots[key] = loaded
-                    self._loading.pop(key)
-                    loading.set()
-                    return list(loaded)
-                if self._loading.get(key) is loading:
-                    self._loading.pop(key)
-                    loading.set()
+        with self._lock:
+            snapshot = self._snapshots.get(key)
+            if snapshot is not None:
+                return list(snapshot)
+            generation = self._generation
+        loaded = tuple(loader())
+        with self._lock:
+            if self._generation == generation:
+                self._snapshots[key] = loaded
+        return list(loaded)
 
     def invalidate(self) -> None:
         with self._lock:

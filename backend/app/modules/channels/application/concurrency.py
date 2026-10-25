@@ -12,27 +12,30 @@ class ConcurrencyLimitExceeded(ValueError):
     """表示用户至少一个命中维度已达到管理员设定的并发上限。"""
 
 
-def reserve_task_concurrency(session: Session, *, task_id: UUID, user_id: UUID, model_id: UUID) -> None:
-    """原子校验命中上限，并为视频任务写入并发租约。
+def reserve_task_concurrency(session: Session, *, task_id: UUID, user_id: UUID, model_id: UUID) -> bool:
+    """原子校验命中上限，并为任务写入并发租约；返回本次是否存在租约。
 
-    锁定用户行以串行化同一用户的创建请求；任一维度无余量时抛出
-    ConcurrencyLimitExceeded。调用方必须将本服务与任务、账务状态变更置于同一事务。
+    仅当用户或模型确实配置了并发上限时才锁用户行并写租约；未配置上限是默认形态，
+    此时直接返回 ``False``，避免每个生成请求都付出一次行锁和若干次查询。
+    命中上限时抛出 ``ConcurrencyLimitExceeded``。调用方必须将本服务与任务、账务状态变更置于同一事务。
     """
 
     crud = ConcurrencyCrud(session)
-    existing = crud.get_lease_by_task_id(task_id=task_id)
-    if existing is not None:
-        return
-    crud.lock_user(user_id=user_id)
-    model, override = crud.get_model_and_override_for_update(user_id=user_id, model_id=model_id)
+    model, override = crud.get_model_and_override(user_id=user_id, model_id=model_id)
     if model is None:
         raise ValueError("模型不存在或已被删除")
     limit = override.concurrency_limit if override is not None and override.active else model.default_concurrency_limit
     if limit is None:
-        return
+        return False
+    existing = crud.get_lease_by_task_id(task_id=task_id)
+    if existing is not None:
+        return True
+    # 锁定用户行以串行化同一用户的创建请求，保证“计数 + 建租约”的原子性。
+    crud.lock_user(user_id=user_id)
     if limit == 0 or crud.count_active_leases(user_id=user_id, model_id=model_id) >= limit:
         raise ConcurrencyLimitExceeded("当前并发任务数已达上限")
     crud.create_lease(task_id=task_id, user_id=user_id, model_id=model_id)
+    return True
 
 
 def release_task_concurrency(session: Session, *, task_id: UUID) -> bool:

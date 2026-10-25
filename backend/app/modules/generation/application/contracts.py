@@ -45,6 +45,8 @@ class GenerationBilling:
     items: list[PricingItem]
     modifiers: list[PricingModifier]
     allowed_fields: list[str]
+    concurrency_leased: bool = False
+    """本次调用是否持有并发租约；未配置并发上限时为假，结算时可跳过释放查询。"""
 
 
 @dataclass(frozen=True)

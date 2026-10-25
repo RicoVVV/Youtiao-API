@@ -8,8 +8,9 @@ from uuid import UUID
 from app.modules.usage.model import UsageDailyStatistic, UsageRecord, UsageRecordStatus
 from app.modules.user.model.user import User
 from app.modules.video.model.video_task import VideoTask
-from sqlalchemy import func
+from sqlalchemy import func, or_, tuple_
 from sqlalchemy import select as sqlalchemy_select
+from sqlalchemy import update as sqlalchemy_update
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -100,6 +101,46 @@ class UsageRecordCrud:
             )
         self._session.flush()
         return len(grouped)
+
+    def list_expired_response_payloads(
+        self, *, before: datetime, before_id: UUID | None, limit: int
+    ) -> list[tuple[UUID, datetime]]:
+        """按创建时间倒序取一批仍带响应体的超期记录，返回 ``(id, created_at)`` 供游标推进。
+
+        使用 ``(created_at, id)`` 游标而不是每次都从超期区间头部重扫：
+        已清理的记录不会在后续批次里被重复扫描，历史积压再多也保持每批固定开销。
+        """
+
+        criteria = [
+            or_(
+                UsageRecord.public_response_payload.is_not(None),
+                UsageRecord.upstream_response_payload.is_not(None),
+            )
+        ]
+        if before_id is None:
+            criteria.append(UsageRecord.created_at < before)
+        else:
+            criteria.append(tuple_(UsageRecord.created_at, UsageRecord.id) < tuple_(before, before_id))
+        rows = self._session.execute(
+            sqlalchemy_select(UsageRecord.id, UsageRecord.created_at)
+            .where(*criteria)
+            .order_by(UsageRecord.created_at.desc(), UsageRecord.id.desc())
+            .limit(limit)
+        )
+        return [(row[0], row[1]) for row in rows]
+
+    def clear_response_payloads(self, *, record_ids: list[UUID]) -> int:
+        """清空指定记录的响应体，返回更新条数。"""
+
+        if not record_ids:
+            return 0
+        result = self._session.execute(
+            sqlalchemy_update(UsageRecord)
+            .where(UsageRecord.id.in_(record_ids))
+            .values(public_response_payload=None, upstream_response_payload=None)
+            .execution_options(synchronize_session=False)
+        )
+        return int(result.rowcount or 0)
 
     def list_statistics_records(self, *, start_at: datetime, end_at: datetime, filters: dict) -> list[UsageRecord]:
         statement = select(UsageRecord).where(UsageRecord.created_at >= start_at, UsageRecord.created_at < end_at)

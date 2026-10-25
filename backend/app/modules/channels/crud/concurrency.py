@@ -21,14 +21,15 @@ class ConcurrencyCrud:
     def lock_user(self, *, user_id: UUID) -> None:
         self._session.scalar(select(User).where(User.id == user_id).with_for_update())
 
-    def get_model_and_override_for_update(
+    def get_model_and_override(
         self, *, user_id: UUID, model_id: UUID
     ) -> tuple[Model | None, UserModelConcurrencyOverride | None]:
         model = self._session.scalar(select(Model).where(Model.id == model_id))
         override = self._session.scalar(
-            select(UserModelConcurrencyOverride)
-            .where(UserModelConcurrencyOverride.user_id == user_id, UserModelConcurrencyOverride.model_id == model_id)
-            .with_for_update()
+            select(UserModelConcurrencyOverride).where(
+                UserModelConcurrencyOverride.user_id == user_id,
+                UserModelConcurrencyOverride.model_id == model_id,
+            )
         )
         return model, override
 

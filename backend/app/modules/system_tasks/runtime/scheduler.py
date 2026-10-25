@@ -92,12 +92,21 @@ class SystemTaskRuntime:
         runner: SystemTaskRunner,
     ) -> dict[str, int]:
         run_task = asyncio.create_task(runner.run())
-        heartbeat_seconds = max(1, lease_seconds // 2)
-        while not run_task.done():
-            done, _ = await asyncio.wait({run_task}, timeout=heartbeat_seconds)
-            if done:
-                break
-            renewed = await service.renew_lease(task_id=task_id, runner_id=self._runner_id, lease_seconds=lease_seconds)
-            if not renewed:
-                raise RuntimeError("系统任务租约已失效")
-        return await run_task
+        try:
+            heartbeat_seconds = max(1, lease_seconds // 2)
+            while not run_task.done():
+                done, _ = await asyncio.wait({run_task}, timeout=heartbeat_seconds)
+                if done:
+                    break
+                renewed = await service.renew_lease(
+                    task_id=task_id, runner_id=self._runner_id, lease_seconds=lease_seconds
+                )
+                if not renewed:
+                    raise RuntimeError("系统任务租约已失效")
+            return await run_task
+        finally:
+            # 租约失效或调度被取消时 runner 仍在跑，必须显式取消，否则会脱离租约继续执行并重复写状态。
+            if not run_task.done():
+                run_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await run_task

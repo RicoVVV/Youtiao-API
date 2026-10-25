@@ -11,7 +11,7 @@ from app.core.database import SQLModelBase
 
 
 class BillingAdjustment(SQLModelBase, table=True):
-    """管理员余额授予记录，关联实际产生的余额明细。"""
+    """管理员余额调整记录，正负金额分别表示入账与扣减，关联实际产生的余额明细。"""
 
     __tablename__ = "billing_adjustments"
     id: UUID = Field(default_factory=uuid4, primary_key=True, description="管理员调整记录主键")

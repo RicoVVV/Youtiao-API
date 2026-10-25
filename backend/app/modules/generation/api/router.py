@@ -4,9 +4,11 @@
 上游响应原样透传，不在 HTTP 层解释或改写字段。
 """
 
+import json
+import os
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.datastructures import UploadFile
 
@@ -42,9 +44,16 @@ from app.modules.providers.dashscope.adapter import (
     ENDPOINT_FIELD,
     MULTIMODAL_ENDPOINT,
 )
+from app.web.request_body import read_json_body
 from app.web.streaming import streaming_response
 
 router = APIRouter(tags=["生成"])
+
+# 图片编辑输入文件上限与业务规则一致：单文件 25 MB（上游 GPT Image 单图限制）、最多 16 个。
+# 网关的 client_max_body_size 必须不低于该总量，否则多张 4K 图片会在 nginx 层被拦。
+_MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024
+_MAX_UPLOAD_FILES = 16
+_MAX_UPLOAD_TOTAL_BYTES = _MAX_UPLOAD_FILES * _MAX_UPLOAD_FILE_BYTES
 
 
 @router.post(OPENAI_IMAGE_PROTOCOL.operation("create").path, summary="创建图片生成")
@@ -247,10 +256,11 @@ def _authorization_kwargs(token_authorization: TokenAuthorizationContext) -> dic
 
 
 async def _read_json_request(request: Request) -> dict[str, Any]:
-    """读取 JSON 请求体并保证顶层为对象。"""
+    """读取 JSON 请求体并保证顶层为对象；读取过程带上限，超限在解析前返回 413。"""
 
+    raw = await read_json_body(request)
     try:
-        payload = await request.json()
+        payload = json.loads(raw)
     except ValueError as exc:
         raise ValidationError("请求体不是合法 JSON") from exc
     if not isinstance(payload, dict):
@@ -259,18 +269,30 @@ async def _read_json_request(request: Request) -> dict[str, Any]:
 
 
 async def _read_multipart_request(request: Request) -> tuple[dict[str, Any], list[ProviderUpload]]:
-    """解析 multipart 请求，分离普通字段与待转发文件。"""
+    """解析 multipart 请求，分离普通字段与待转发文件。
 
+    文件不读入内存，只按解析阶段得到的字节数校验上限，随后把文件对象交给上游适配器流式转发。
+    """
+
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > _MAX_UPLOAD_TOTAL_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="请求体超出大小限制")
     form = await request.form()
     payload: dict[str, Any] = {}
     uploads: list[ProviderUpload] = []
+    upload_bytes = 0
     for key, value in form.multi_items():
         if isinstance(value, UploadFile):
+            size = _upload_size(value)
+            if size > _MAX_UPLOAD_FILE_BYTES or upload_bytes + size > _MAX_UPLOAD_TOTAL_BYTES:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="请求体超出大小限制")
+            upload_bytes += size
             uploads.append(
                 ProviderUpload(
                     field_name=key,
                     filename=value.filename or key,
-                    content=await value.read(),
+                    stream=value.file,
+                    size=size,
                     content_type=value.content_type or "application/octet-stream",
                 )
             )
@@ -283,3 +305,14 @@ async def _read_multipart_request(request: Request) -> tuple[dict[str, Any], lis
         else:
             payload[key] = [existing, value]
     return payload, uploads
+
+
+def _upload_size(upload: UploadFile) -> int:
+    """返回上传文件字节数：优先用 Starlette 解析时累计的 size，缺失时按文件对象计算。"""
+
+    if upload.size is not None:
+        return upload.size
+    upload.file.seek(0, os.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    return size
