@@ -170,6 +170,8 @@ class UsageRecordCrud:
         model_name: str | None,
         token_display_name: str | None,
         status: str | None,
+        request_id: str | None,
+        usage_record_id: UUID | None,
         start_at: datetime | None,
         end_at: datetime | None,
     ) -> tuple[int, list[UsageRecord], tuple[int, int, Decimal, int]]:
@@ -180,6 +182,8 @@ class UsageRecordCrud:
             token_display_name=token_display_name,
             status=status,
             channel_id=None,
+            request_id=request_id,
+            usage_record_id=usage_record_id,
             start_at=start_at,
             end_at=end_at,
         )
@@ -199,6 +203,8 @@ class UsageRecordCrud:
         channel_id: UUID | None,
         provider_name: str | None,
         username: str | None,
+        request_id: str | None,
+        usage_record_id: UUID | None,
         start_at: datetime | None,
         end_at: datetime | None,
     ) -> tuple[int, list[UsageRecord], tuple[int, int, Decimal, int]]:
@@ -218,6 +224,8 @@ class UsageRecordCrud:
             token_display_name=token_display_name,
             status=status,
             channel_id=channel_id,
+            request_id=request_id,
+            usage_record_id=usage_record_id,
             start_at=start_at,
             end_at=end_at,
         )
@@ -249,6 +257,8 @@ class UsageRecordCrud:
         token_display_name: str | None,
         status: str | None,
         channel_id: UUID | None,
+        request_id: str | None,
+        usage_record_id: UUID | None,
         start_at: datetime | None,
         end_at: datetime | None,
     ):
@@ -262,6 +272,10 @@ class UsageRecordCrud:
             statement = statement.where(UsageRecord.status == status)
         if channel_id is not None:
             statement = statement.where(UsageRecord.channel_id == channel_id)
+        if request_id is not None:
+            statement = statement.where(UsageRecord.request_id == request_id)
+        if usage_record_id is not None:
+            statement = statement.where(UsageRecord.id == usage_record_id)
         if start_at is not None:
             statement = statement.where(UsageRecord.created_at >= start_at)
         if end_at is not None:

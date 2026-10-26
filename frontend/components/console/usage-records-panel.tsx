@@ -442,6 +442,7 @@ export function UsageRecordsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [requestTypeFilter, setRequestTypeFilter] = useState("");
+  const [requestIdFilter, setRequestIdFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const [tokenFilter, setTokenFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -545,6 +546,7 @@ export function UsageRecordsPanel() {
               page_size: PAGE_SIZE,
               ...timeParams,
               request_type: requestTypeFilter.trim() || undefined,
+              request_id: requestIdFilter.trim() || undefined,
               model_name: modelFilter.trim() || undefined,
               token_display_name: tokenFilter.trim() || undefined,
               status: statusFilter || undefined,
@@ -569,6 +571,7 @@ export function UsageRecordsPanel() {
       isAdmin,
       timeParams,
       requestTypeFilter,
+      requestIdFilter,
       modelFilter,
       tokenFilter,
       statusFilter,
@@ -657,6 +660,12 @@ export function UsageRecordsPanel() {
           options={requestTypeOptions}
           className="w-auto"
           aria-label={t("usageRecords.filterByType")}
+        />
+        <Input
+          value={requestIdFilter}
+          onChange={(e) => setRequestIdFilter(e.target.value)}
+          placeholder={t("usageRecords.filterByRequestId")}
+          className="w-64"
         />
         <Input
           value={modelFilter}

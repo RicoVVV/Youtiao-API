@@ -171,6 +171,7 @@
     "filterByModel": "Filter by model name",
     "filterByToken": "Filter by key name",
     "filterByStatus": "Filter by status",
+    "filterByRequestId": "Filter by request ID",
     "filterByUsername": "Filter by username",
     "filterByRange": "Time range",
     "startTime": "Start time",

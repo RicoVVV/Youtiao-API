@@ -15,6 +15,8 @@ class UsageRecordListQuery(BaseModel):
     model_name: str | None = Field(default=None, min_length=1, max_length=64)
     token_display_name: str | None = Field(default=None, min_length=1, max_length=128)
     status: str | None = Field(default=None, min_length=1, max_length=32)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    usage_record_id: UUID | None = None
     range: Literal["today", "last_7_days", "last_30_days"] | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None

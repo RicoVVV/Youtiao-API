@@ -171,6 +171,7 @@
     "filterByModel": "按模型名称筛选",
     "filterByToken": "按密钥名称筛选",
     "filterByStatus": "按状态筛选",
+    "filterByRequestId": "按请求 ID 筛选",
     "filterByUsername": "按用户名筛选",
     "filterByRange": "时间范围",
     "startTime": "开始时间",
