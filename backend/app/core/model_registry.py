@@ -1,5 +1,6 @@
 """ORM 模型注册表，确保跨领域关系在应用、Worker 和迁移进程中完整加载。"""
 
+from app.modules.affiliate.model import AffiliateLedger, UserAffiliate
 from app.modules.billing.model import BillingAdjustment, Charge, PriceQuote, RedemptionCode
 from app.modules.channels.model.channel import Channel
 from app.modules.models.model import Model, ModelRoute
@@ -16,6 +17,8 @@ from app.modules.video.model.video_task import TaskEvent, VideoTask
 from app.modules.wallet.model import BalanceRecord, RechargeOrder, Wallet
 
 __all__ = [
+    "AffiliateLedger",
+    "UserAffiliate",
     "Token",
     "AuthSession",
     "RefreshToken",

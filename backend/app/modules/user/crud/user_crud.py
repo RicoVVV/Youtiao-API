@@ -54,10 +54,13 @@ class UserCrud:
         user, balance, usage = row
         return user, Decimal(balance), Decimal(usage)
 
-    def get_by_username(self, username: str) -> User | None:
-        """按唯一登录名查询用户。"""
+    def get_by_username(self, username: str, *, include_deleted: bool = False) -> User | None:
+        """按唯一登录名查询用户；include_deleted 为真时包含已注销用户。"""
 
-        return self._session.scalar(select(User).where(User.username == username))
+        statement = select(User).where(User.username == username)
+        if include_deleted:
+            statement = statement.execution_options(include_deleted=True)
+        return self._session.scalar(statement)
 
     def get_by_email(self, email: str) -> User | None:
         """按邮箱（不区分大小写）查询未删除的用户。"""

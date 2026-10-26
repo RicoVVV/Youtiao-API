@@ -20,6 +20,7 @@ from app.modules.admin.api.token.router import router as token_router
 from app.modules.admin.api.usage.router import router as usage_router
 from app.modules.admin.api.users.router import router as users_router
 from app.modules.admin.api.videos.router import router as videos_router
+from app.modules.affiliate.api.admin_router import admin_router as affiliate_router
 from app.modules.membership.api.admin_router import router as membership_router
 from app.modules.payment.api.admin.router import router as payment_router
 from app.modules.site_info.api import admin_router as site_info_router
@@ -33,6 +34,7 @@ router.include_router(token_groups_router)
 router.include_router(videos_router, prefix="/admin")
 router.include_router(channels_router, prefix="/admin")
 router.include_router(billing_router, prefix="/admin")
+router.include_router(affiliate_router)
 router.include_router(models_router, prefix="/admin")
 router.include_router(monitoring_router, prefix="/admin")
 router.include_router(messages_router)

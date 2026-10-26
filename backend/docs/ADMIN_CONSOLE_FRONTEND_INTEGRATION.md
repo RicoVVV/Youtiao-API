@@ -443,6 +443,13 @@ it from the selection.
 group, exactly like single creation without `token_group_ids`. When provided, every group in the list receives its own
 copy of the seeded pricing rules.
 
+If an item's model name already exists as a live model, the batch does not create a duplicate and does not rebuild the
+existing model. It reuses that model and only seeds pricing rules for the requested `token_group_ids` that currently have
+no live pricing rule; groups that already have pricing are left untouched. For a reused model, `items[].pricing_rules`
+is used for the missing groups when provided; otherwise the model's existing pricing rule set is copied to each missing
+group, falling back to preset/template pricing when the model has no pricing at all. This keeps the channel flow
+idempotent and lets the same model be served by multiple channels with different token groups.
+
 ### Request body
 
 | Field | Type | Required | Description |

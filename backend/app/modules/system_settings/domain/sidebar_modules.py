@@ -8,7 +8,7 @@
 SIDEBAR_GROUPS: dict[str, tuple[str, ...]] = {
     "chat": ("playground", "canvas"),
     "general": ("usage", "monitoring", "api-keys", "usage-records"),
-    "account": ("billing", "profile"),
+    "account": ("billing", "affiliate", "profile"),
 }
 """分组 key → 该分组模块 key 顺序表。"""
 

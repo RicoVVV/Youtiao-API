@@ -107,6 +107,10 @@ export function AuthPanel() {
   const [confirm, setConfirm] = useState("");
   const [email, setEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
+  // 邀请码：优先取 URL ?aff= / ?aff_code= 参数，也可在注册表单中手动填写
+  const [affCode, setAffCode] = useState(
+    () => (searchParams.get("aff") ?? searchParams.get("aff_code") ?? "").slice(0, 32)
+  );
   const [sendCodeStatus, setSendCodeStatus] = useState<"idle" | "sending">("idle");
   const [resendIn, setResendIn] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
@@ -116,6 +120,8 @@ export function AuthPanel() {
   // 公开系统设置：email_verification_enabled 决定注册是否展示邮箱与验证码
   const settings = usePublicSystemSettings();
   const emailVerificationEnabled = settings?.email_verification_enabled ?? false;
+  // 邀请返利总开关：开启时注册表单展示邀请码输入框
+  const affiliateEnabled = settings?.affiliate_enabled ?? false;
 
   // 登录成功后的目标页：仅允许站内路径，防开放重定向
   const redirectParam = searchParams.get("redirect");
@@ -217,6 +223,10 @@ export function AuthPanel() {
           // 开关开启时必填；关闭时不传（传了也会被后端忽略）
           ...(emailVerificationEnabled
             ? { email: email.trim(), verification_code: emailCode.trim() }
+            : {}),
+          // 邀请返利开关开启且填写了邀请码时提交；开关关闭时后端静默忽略
+          ...(affiliateEnabled && affCode.trim()
+            ? { aff_code: affCode.trim() }
             : {}),
         });
       }
@@ -346,6 +356,28 @@ export function AuthPanel() {
                   autoComplete="new-password"
                 />
               </div>
+            )}
+            {/* 邀请码：总开关开启时展示；URL 带 ?aff= 参数时自动填入 */}
+            {mode === "register" && affiliateEnabled && (
+              <>
+                <Input
+                  id="affCode"
+                  type="text"
+                  placeholder={t("affCodePlaceholder")}
+                  value={affCode}
+                  onChange={(e) => setAffCode(e.target.value.slice(0, 32))}
+                  className="animate-rise-in h-11"
+                  autoComplete="off"
+                />
+                {/* 填写邀请码注册可获赠送额度 */}
+                {Number(settings?.affiliate_signup_bonus ?? 0) > 0 && (
+                  <p className="animate-rise-in -mt-2 text-xs text-muted-foreground">
+                    {t("affSignupBonus", {
+                      amount: Number(settings?.affiliate_signup_bonus ?? 0),
+                    })}
+                  </p>
+                )}
+              </>
             )}
             {/* 注册邮箱验证：开关开启时邮箱与验证码必填 */}
             {mode === "register" && emailVerificationEnabled && (

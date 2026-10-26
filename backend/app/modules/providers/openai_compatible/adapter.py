@@ -212,12 +212,16 @@ class OpenAICompatibleProvider:
             await self._close_if_owned()
 
     async def fetch_result(self, upstream_task_id: str) -> tuple[AsyncIterator[bytes], str]:
+        """以流式迭代器读取上游视频成品；仅错误响应才读取响应体。"""
+
         try:
             url = self._url(f"{_VIDEOS_PATH}/{upstream_task_id}/content")
             response = await send_provider_request(
                 self._client, "GET", url, provider_type=self.name, headers=self._auth_headers(), stream=True
             )
-            await response.aread()
+            if response.is_error:
+                # 成功路径必须保持未读状态，整包读入会让视频内容常驻 Worker 内存。
+                await response.aread()
             log_provider_response(response, provider_type=self.name, method="GET", url=url)
             status_error = provider_error_from_status(response)
             if status_error is not None:

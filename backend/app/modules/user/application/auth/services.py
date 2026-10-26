@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core.config import get_settings
 from app.core.errors import AuthenticationError, ConflictError, NotFoundError, ValidationError
+from app.modules.affiliate.application.services import AffiliateApplicationService
 from app.modules.system_settings.application.services import SystemSettingsApplicationService
 from app.modules.user.application.auth.contracts import UserProfileData
 from app.modules.user.application.auth.email_verification import (
@@ -26,6 +28,13 @@ from app.modules.user.security.password import hash_password, verify_password
 from app.modules.wallet.crud.wallet_crud import WalletCrud
 
 logger = logging.getLogger(__name__)
+
+
+def _is_username_conflict(exc: IntegrityError) -> bool:
+    """判断唯一约束冲突是否来自用户名，兼容不同驱动的异常结构。"""
+
+    constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    return constraint == "users_username_key" or "users_username_key" in str(exc.orig)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,17 +101,18 @@ class AuthApplicationService:
         password: str,
         email: str | None = None,
         verification_code: str | None = None,
+        aff_code: str | None = None,
         skip_email_verification: bool = False,
     ) -> RegisteredUser:
         """注册用户并在同一事务创建钱包，不自动签发 API Key。
 
         参数：username 为唯一用户名，password 为符合长度要求的登录密码；
         email 与 verification_code 在系统开启注册邮箱验证时必填；
-        skip_email_verification 仅供管理员代建账号跳过邮箱验证。
+        aff_code 为可选的邀请返利码；skip_email_verification 仅供管理员代建账号跳过邮箱验证。
         返回值：创建后的用户。
         异常：用户名重复时抛出 UsernameAlreadyExistsError；邮箱已注册时抛出 EmailAlreadyRegisteredError；
         邮箱或验证码缺失、错误时抛出 ValidationError；其他写入异常将回滚。
-        副作用：验证码在提交前被消费，事务失败时用户需重新获取验证码。
+        副作用：邀请码在消费邮箱验证码前预校验；进入写入阶段后事务失败时用户需重新获取验证码。
         """
 
         verified_email: str | None = None
@@ -113,16 +123,28 @@ class AuthApplicationService:
                 if not email or not verification_code:
                     raise ValidationError("已开启邮箱验证，注册时必须提供邮箱和验证码")
                 verified_email = EmailVerificationService.normalize_email(email)
+        if aff_code and aff_code.strip():
+            AffiliateApplicationService(self._session).validate_binding_code(aff_code)
         try:
             if verified_email is not None and self._users.get_by_email(verified_email) is not None:
                 raise EmailAlreadyRegisteredError("该邮箱已被注册")
-            if self._users.get_by_username(username) is not None:
+            if self._users.get_by_username(username, include_deleted=True) is not None:
                 raise UsernameAlreadyExistsError("用户名已存在")
             if verified_email is not None:
                 EmailVerificationService.consume_registration_code(email=verified_email, code=verification_code)
-            user = self._users.create(username=username, password_hash=hash_password(password), email=verified_email)
+            try:
+                user = self._users.create(
+                    username=username, password_hash=hash_password(password), email=verified_email
+                )
+            except IntegrityError as exc:
+                if _is_username_conflict(exc):
+                    raise UsernameAlreadyExistsError("用户名已存在") from exc
+                raise
             # 用户主键已刷新，才能在同一事务内建立钱包归属关系。
             WalletCrud(self._session).create_wallet(user.id)
+            affiliate = AffiliateApplicationService(self._session)
+            if affiliate.bind_inviter_by_code(user_id=user.id, raw_code=aff_code):
+                affiliate.grant_signup_bonus(user.id)
             self._session.commit()
             return RegisteredUser(user=user)
         except Exception:
@@ -147,9 +169,14 @@ class AuthApplicationService:
             self._users.acquire_initial_admin_lock()
             if self._users.has_admin():
                 raise SetupAlreadyCompletedError("系统已完成管理员初始化")
-            if self._users.get_by_username(username) is not None:
+            if self._users.get_by_username(username, include_deleted=True) is not None:
                 raise UsernameAlreadyExistsError("用户名已存在")
-            user = self._users.create(username=username, password_hash=hash_password(password), is_admin=True)
+            try:
+                user = self._users.create(username=username, password_hash=hash_password(password), is_admin=True)
+            except IntegrityError as exc:
+                if _is_username_conflict(exc):
+                    raise UsernameAlreadyExistsError("用户名已存在") from exc
+                raise
             WalletCrud(self._session).create_wallet(user.id)
             self._session.commit()
             return RegisteredUser(user=user)

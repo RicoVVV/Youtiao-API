@@ -729,6 +729,13 @@ MESSAGES_EN: dict[str, str] = {
     "分组价格倍率不合法": "Invalid group price multiplier",
     "开始时间不能晚于结束时间": "The start time cannot be later than the end time",
     "渠道配置的最高 TLS 版本只支持 1.2 或 1.3": "The channel's maximum TLS version supports only 1.2 or 1.3",
+    # 邀请返利
+    "邀请码格式不正确": "The invite code format is invalid",
+    "邀请码无效": "The invite code is invalid",
+    "已绑定邀请人，不能重复绑定": "An inviter is already bound and cannot be changed",
+    "暂无可转入的邀请返利": "No affiliate rebate is available to transfer",
+    "邀请返利档案不存在": "Affiliate profile not found",
+    "无法生成唯一邀请码": "Unable to generate a unique invite code",
 }
 
 CODE_MESSAGES: dict[str, str] = {
@@ -778,4 +785,8 @@ CODE_MESSAGES: dict[str, str] = {
     # 侧边栏模块目录校验
     "sidebar.unknown_group": "Unknown sidebar group: {key}",
     "sidebar.unknown_module": "Unknown sidebar module: {key}",
+    # 邀请返利
+    "affiliate.code_invalid": "The invite code is invalid",
+    "affiliate.already_bound": "An inviter is already bound and cannot be changed",
+    "affiliate.quota_empty": "No affiliate rebate is available to transfer",
 }

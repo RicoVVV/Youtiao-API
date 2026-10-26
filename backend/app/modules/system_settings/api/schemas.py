@@ -1,7 +1,9 @@
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter, field_validator
 
+from app.core.affiliate import MAX_SIGNUP_BONUS
 from app.core.channel_automation import parse_status_code_spec
 from app.modules.system_settings.application.services import KEEP_PASSWORD_SENTINEL
 
@@ -16,6 +18,8 @@ class SystemSettingsResponse(BaseModel):
     terms_of_service: str
     privacy_policy: str
     email_verification_enabled: bool
+    affiliate_enabled: bool
+    affiliate_signup_bonus: Decimal
 
 
 class AdminSystemSettingsResponse(BaseModel):
@@ -30,6 +34,8 @@ class AdminSystemSettingsResponse(BaseModel):
     terms_of_service: str
     privacy_policy: str
     email_verification_enabled: bool
+    affiliate_enabled: bool
+    affiliate_signup_bonus: Decimal
     smtp_host: str
     smtp_port: int
     smtp_security: str
@@ -46,6 +52,10 @@ class AdminSystemSettingsResponse(BaseModel):
     channel_auto_disable_status_codes: str
     channel_auto_retry_status_codes: str
     channel_auto_disable_keywords: str
+    affiliate_rebate_rate_percent: Decimal
+    affiliate_rebate_freeze_hours: int
+    affiliate_rebate_duration_days: int
+    affiliate_rebate_per_invitee_cap: Decimal
 
 
 class SystemSettingsUpdateRequest(BaseModel):
@@ -58,6 +68,18 @@ class SystemSettingsUpdateRequest(BaseModel):
     terms_of_service: str | None = None
     privacy_policy: str | None = None
     email_verification_enabled: bool | None = None
+    affiliate_enabled: bool | None = Field(default=None, description="是否启用邀请返利功能")
+    affiliate_rebate_rate_percent: Decimal | None = Field(
+        default=None, ge=0, le=100, description="全局邀请返利比例（百分比 0-100）"
+    )
+    affiliate_rebate_freeze_hours: int | None = Field(default=None, ge=0, le=720, description="返利冻结小时数")
+    affiliate_rebate_duration_days: int | None = Field(default=None, ge=0, le=3650, description="返利有效天数")
+    affiliate_rebate_per_invitee_cap: Decimal | None = Field(
+        default=None, ge=0, description="单个被邀请人的返利上限（USD），0 表示无上限"
+    )
+    affiliate_signup_bonus: Decimal | None = Field(
+        default=None, ge=0, le=MAX_SIGNUP_BONUS, description="邀请码注册赠送余额（USD），0 表示不赠送"
+    )
     smtp_host: str | None = Field(default=None, max_length=255)
     smtp_port: int | None = Field(default=None, ge=1, le=65535)
     smtp_security: Literal["none", "starttls", "ssl"] | None = None

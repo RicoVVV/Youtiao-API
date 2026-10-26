@@ -81,7 +81,7 @@ def get_channel(
     return AdminModelConfigApplicationService(session).get_channel(channel_id)
 
 
-@router.get("/trend", dependencies=[Depends(get_admin_user_id)], summary="Query channel runtime trend")
+@router.get("/trend", dependencies=[Depends(get_admin_user_id)], summary="查询渠道运行趋势")
 def channel_trend(
     session: Annotated[Session, Depends(get_db)],
     channel_id: Annotated[UUID, Query()],

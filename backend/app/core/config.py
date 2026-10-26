@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     auth_redis_circuit_breaker_seconds: int = Field(default=5, ge=1, le=60)
     system_task_scheduler_interval_seconds: int = Field(default=30, ge=1)
     system_task_lock_ttl_seconds: int = Field(default=60, ge=1)
+    memory_maintenance_interval_seconds: int = Field(default=300, ge=0)
+    """进程内存回收间隔秒数；设为 0 关闭周期回收，由环境变量覆盖。"""
     database_pool_size: int = Field(default=16, ge=1)
     database_max_overflow: int = Field(default=4, ge=0)
     database_async_pool_size: int = Field(default=36, ge=1)

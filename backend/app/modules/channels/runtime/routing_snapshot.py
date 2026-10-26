@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _INVALIDATION_CHANNEL = "routing-snapshot:invalidate"
 _INVALIDATION_MESSAGE = {"scope": "all"}
+_MAX_SNAPSHOT_ENTRIES = 256
+"""进程内快照条目上限：键由模型与令牌组组合决定，不设上限时少见的组合会让缓存无限增长。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +136,9 @@ class RoutingSnapshotStore:
         loaded = tuple(loader())
         with self._lock:
             if self._generation == generation:
+                if key not in self._snapshots and len(self._snapshots) >= _MAX_SNAPSHOT_ENTRIES:
+                    # 快照可随时按需重载，直接淘汰最老条目即可，无需额外维护访问顺序。
+                    self._snapshots.pop(next(iter(self._snapshots)))
                 self._snapshots[key] = loaded
         return list(loaded)
 

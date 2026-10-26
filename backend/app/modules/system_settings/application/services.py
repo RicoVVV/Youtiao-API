@@ -1,10 +1,23 @@
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.core.affiliate import (
+    DEFAULT_AFFILIATE_ENABLED,
+    DEFAULT_REBATE_DURATION_DAYS,
+    DEFAULT_REBATE_FREEZE_HOURS,
+    DEFAULT_REBATE_PER_INVITEE_CAP,
+    DEFAULT_REBATE_RATE_PERCENT,
+    DEFAULT_SIGNUP_BONUS,
+    MAX_REBATE_DURATION_DAYS,
+    MAX_REBATE_FREEZE_HOURS,
+    MAX_SIGNUP_BONUS,
+    clamp_rebate_rate,
+)
 from app.core.channel_automation import (
     DEFAULT_CHANNEL_AUTOMATION_CONFIG,
     ChannelAutomationConfig,
@@ -55,6 +68,8 @@ class SystemSettingsApplicationService:
         "terms_of_service",
         "privacy_policy",
         "email_verification_enabled",
+        "affiliate_enabled",
+        "affiliate_signup_bonus",
     )
     admin_fields = (
         "smtp_host",
@@ -72,6 +87,11 @@ class SystemSettingsApplicationService:
         "channel_auto_disable_status_codes",
         "channel_auto_retry_status_codes",
         "channel_auto_disable_keywords",
+        "affiliate_rebate_rate_percent",
+        "affiliate_rebate_freeze_hours",
+        "affiliate_rebate_duration_days",
+        "affiliate_rebate_per_invitee_cap",
+        "affiliate_signup_bonus",
     )
     _text_fields = (
         "system_name",
@@ -100,6 +120,12 @@ class SystemSettingsApplicationService:
         "channel_probe_timeout_seconds",
         "channel_auto_disable_enabled",
         "channel_auto_enable_enabled",
+        "affiliate_enabled",
+        "affiliate_rebate_rate_percent",
+        "affiliate_rebate_freeze_hours",
+        "affiliate_rebate_duration_days",
+        "affiliate_rebate_per_invitee_cap",
+        "affiliate_signup_bonus",
     )
 
     def __init__(self, session: Session, settings: Settings) -> None:
@@ -109,6 +135,34 @@ class SystemSettingsApplicationService:
 
     def get_public_settings(self) -> dict[str, Any]:
         return self._public_projection(self._get_or_create_default())
+
+    def get_affiliate_settings(self) -> dict[str, Any]:
+        """只读返回邀请返利运行配置；配置行缺失时使用默认值且不写库。"""
+
+        setting = self._crud.get()
+        if setting is None:
+            return {
+                "enabled": DEFAULT_AFFILIATE_ENABLED,
+                "rebate_rate_percent": DEFAULT_REBATE_RATE_PERCENT,
+                "freeze_hours": DEFAULT_REBATE_FREEZE_HOURS,
+                "duration_days": DEFAULT_REBATE_DURATION_DAYS,
+                "per_invitee_cap": DEFAULT_REBATE_PER_INVITEE_CAP,
+                "signup_bonus": DEFAULT_SIGNUP_BONUS,
+            }
+        return {
+            "enabled": bool(setting.affiliate_enabled),
+            "rebate_rate_percent": clamp_rebate_rate(setting.affiliate_rebate_rate_percent),
+            "freeze_hours": _bounded_int(
+                setting.affiliate_rebate_freeze_hours, DEFAULT_REBATE_FREEZE_HOURS, MAX_REBATE_FREEZE_HOURS
+            ),
+            "duration_days": _bounded_int(
+                setting.affiliate_rebate_duration_days, DEFAULT_REBATE_DURATION_DAYS, MAX_REBATE_DURATION_DAYS
+            ),
+            "per_invitee_cap": _non_negative_decimal(setting.affiliate_rebate_per_invitee_cap),
+            "signup_bonus": _non_negative_decimal(
+                setting.affiliate_signup_bonus, DEFAULT_SIGNUP_BONUS, MAX_SIGNUP_BONUS
+            ),
+        }
 
     def get_admin_settings(self) -> dict[str, Any]:
         setting = self._get_or_create_default()
@@ -342,3 +396,30 @@ class SystemSettingsApplicationService:
             },
             "visibility": normalize_visibility(setting.sidebar_visibility),
         }
+
+
+def _bounded_int(value: Any, default: int, maximum: int) -> int:
+    """把配置整数限制在 0 到最大值之间。"""
+
+    if value is None:
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(number, 0), maximum)
+
+
+def _non_negative_decimal(
+    value: Any, default: Decimal = DEFAULT_REBATE_PER_INVITEE_CAP, maximum: Decimal | None = None
+) -> Decimal:
+    """把配置金额限制为非负 Decimal，并按需限制上限。"""
+
+    if value is None:
+        return default
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return default
+    amount = max(amount, Decimal("0"))
+    return amount if maximum is None else min(amount, maximum)

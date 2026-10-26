@@ -33,6 +33,8 @@ class BalanceRecordType(str, enum.Enum):
     usage = "usage"
     refund = "refund"
     membership_bonus = "membership_bonus"
+    affiliate_rebate = "affiliate_rebate"
+    signup_bonus = "signup_bonus"
 
 
 class RechargeOrderType(str, enum.Enum):

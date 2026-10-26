@@ -41,6 +41,7 @@ const MENU_ITEMS = [
     children: [
       { href: "/system/payment-gateway", labelKey: "paymentGateway" },
       { href: "/system/payment-records", labelKey: "paymentRecords" },
+      { href: "/system/affiliate", labelKey: "affiliate" },
     ],
   },
   {

@@ -52,13 +52,30 @@ def _media_type(response: httpx.Response) -> str:
     return response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
 
+def _body_size(response: httpx.Response) -> int | None:
+    """返回响应体字节数：已读取时取实际长度，未读取的流式响应回退 Content-Length。
+
+    未被消费的流式响应访问 ``response.content`` 会触发 ``ResponseNotRead``，因此不能直接取长度。
+    """
+
+    if response.is_stream_consumed:
+        return len(response.content)
+    length = response.headers.get("content-length")
+    return int(length) if isinstance(length, str) and length.isdigit() else None
+
+
 def _is_text_response(response: httpx.Response) -> bool:
-    """判断响应体能否安全按文本输出：优先看 Content-Type，缺失时以内容前缀兜底。"""
+    """判断响应体能否安全按文本输出：优先看 Content-Type，缺失时以内容前缀兜底。
+
+    未读取的流式响应无法预判内容前缀，按二进制摘要处理，避免为了判断类型而整包读入内存。
+    """
 
     media_type = _media_type(response)
     if media_type.startswith(_TEXT_MEDIA_TYPES) or media_type.endswith(_TEXT_MEDIA_TYPE_SUFFIXES):
         return True
     if media_type:
+        return False
+    if not response.is_stream_consumed:
         return False
     return b"\x00" not in response.content[:1024]
 
@@ -66,7 +83,8 @@ def _is_text_response(response: httpx.Response) -> bool:
 def _binary_summary(response: httpx.Response) -> str:
     """生成二进制响应体的摘要，避免把媒体字节写入日志或错误快照。"""
 
-    return f"[binary {_media_type(response) or 'unknown'} {len(response.content)} bytes]"
+    size = _body_size(response)
+    return f"[binary {_media_type(response) or 'unknown'} {size if size is not None else 'unknown'} bytes]"
 
 
 def _sanitize_text(value: str) -> str:
@@ -148,7 +166,9 @@ def _sanitized_response(response: httpx.Response) -> Any:
 
     if not _is_text_response(response):
         return {"binary": _binary_summary(response)}
-    size = len(response.content)
+    size = _body_size(response)
+    if size is None:
+        return {"summary": f"[text {_media_type(response) or 'unknown'} body not read]"}
     if size > _MAX_LOG_BODY_BYTES:
         return {"summary": f"[text {_media_type(response) or 'unknown'} {size} bytes omitted]"}
     return _sanitize_value(response_json(response))
@@ -179,7 +199,7 @@ def response_payload(response: httpx.Response) -> dict[str, Any]:
 def _response_summary(response: httpx.Response) -> dict[str, Any]:
     """生成成功响应的体积摘要，替代整包脱敏解析。"""
 
-    return {"content_type": _media_type(response) or "unknown", "bytes": len(response.content)}
+    return {"content_type": _media_type(response) or "unknown", "bytes": _body_size(response)}
 
 
 def _response_observation(response: httpx.Response) -> dict[str, Any]:
@@ -335,9 +355,10 @@ async def send_provider_request(
 
 
 def log_provider_response(response: httpx.Response, *, provider_type: str, method: str, url: str) -> None:
-    """打印流式响应读取完成后的上游状态与响应摘要。
+    """打印流式响应的上游状态与响应摘要。
 
-    流式请求由 ``send_provider_request`` 记录请求侧，调用方读取完媒体内容后调用本函数补全结果日志。
+    流式请求由 ``send_provider_request`` 记录请求侧，调用方在开始下发媒体内容前调用本函数补全结果日志。
+    本函数只读取已消费的响应体，未消费的流式响应仅按 Content-Length 记录体积，不会触发整包读取。
     """
 
     extra: dict[str, Any] = {

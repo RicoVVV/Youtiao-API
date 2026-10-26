@@ -1,5 +1,6 @@
 """集中注册 ORM 模型，确保应用、Worker 和迁移进程完整加载元数据。"""
 
+from app.modules.affiliate.model import AffiliateLedger, UserAffiliate
 from app.modules.billing.model import BillingAdjustment, Charge, PriceQuote, RedemptionCode
 from app.modules.channels.model.channel import Channel
 from app.modules.channels.model.concurrency import UserConcurrencyLease, UserModelConcurrencyOverride
@@ -48,6 +49,8 @@ from app.modules.video.model.video_task import TaskEvent, VideoTask
 from app.modules.wallet.model import BalanceAlertState, BalanceRecord, RechargeOrder, Wallet
 
 __all__ = [
+    "AffiliateLedger",
+    "UserAffiliate",
     "Token",
     "TokenGroup",
     "TokenGroupUser",

@@ -246,8 +246,10 @@ class AdminModelConfigApplicationService:
     def batch_create_models(self, payload: dict[str, Any]) -> dict[str, object]:
         """批量创建模型；任一模型失败时整体回滚，不做部分创建。
 
-        可按 ``token_group_ids`` 为整批模型指定默认定价规则的播种分组，未指定时回退到系统默认分组。
-        每个模型可覆盖公共的 ``provider_id``、``template_id``、``model_type`` 与 ``pricing_rules``。
+        同名模型已存在时复用该模型，只为其缺失定价的目标令牌分组补种价格，已有分组不受影响；
+        这样同一模型可被多个渠道以不同令牌分组引用。可按 ``token_group_ids`` 为整批模型指定默认定价
+        规则的播种分组，未指定时回退到系统默认分组。每个模型可覆盖公共的 ``provider_id``、
+        ``template_id``、``model_type`` 与 ``pricing_rules``。
         """
 
         items = payload["items"]
@@ -260,8 +262,20 @@ class AdminModelConfigApplicationService:
             raise ValidationError("批量创建的模型名不能重复")
 
         def action() -> dict[str, object]:
+            existing_by_name = {model.name: model for model in ModelCrud(self._session).list_by_names(names)}
             results: list[dict[str, object]] = []
             for item, name in zip(items, names, strict=True):
+                existing = existing_by_name.get(name)
+                if existing is not None:
+                    results.append(
+                        _reuse_existing_model(
+                            self._session,
+                            model=existing,
+                            token_group_ids=token_group_ids,
+                            manual_rules=item.get("pricing_rules"),
+                        )
+                    )
+                    continue
                 try:
                     results.append(
                         create_model(
@@ -370,44 +384,7 @@ class AdminModelConfigApplicationService:
     def _clone_rule_children(self, *, source_rule_id: UUID, target_rule_id: UUID) -> None:
         """复制方案内的计费项与修正项，并把计费项之间的主键引用重映射到副本。"""
 
-        item_crud = PricingItemCrud(self._session)
-        source_items = item_crud.list_for_rule(source_rule_id)
-        item_id_map: dict[str, str] = {}
-        items: list[PricingItem] = []
-        for source_item in source_items:
-            item = PricingItem(
-                pricing_rule_id=target_rule_id,
-                label=source_item.label,
-                position=source_item.position,
-                kind=source_item.kind,
-                source_fields=list(source_item.source_fields),
-                estimate_config=deepcopy(source_item.estimate_config),
-                free_quantity=source_item.free_quantity,
-                unit_amount=source_item.unit_amount,
-                active=source_item.active,
-            )
-            item_id_map[str(source_item.id)] = str(item.id)
-            items.append(item)
-        for source_item, item in zip(source_items, items, strict=True):
-            if source_item.price_source_item_id is not None:
-                item.price_source_item_id = UUID(item_id_map[str(source_item.price_source_item_id)])
-        item_crud.add_many(items)
-        modifier_crud = PricingModifierCrud(self._session)
-        for source_modifier in modifier_crud.list_for_rule(source_rule_id):
-            modifier_crud.add(
-                PricingModifier(
-                    pricing_rule_id=target_rule_id,
-                    name=source_modifier.name,
-                    priority=source_modifier.priority,
-                    conditions=deepcopy(source_modifier.conditions),
-                    effect_type=source_modifier.effect_type,
-                    effect_payload=deepcopy(source_modifier.effect_payload),
-                    scope_type=source_modifier.scope_type,
-                    scope_item_ids=[item_id_map.get(item_id, item_id) for item_id in source_modifier.scope_item_ids],
-                    scope_item_kinds=list(source_modifier.scope_item_kinds),
-                    active=source_modifier.active,
-                )
-            )
+        _clone_pricing_rule_children(self._session, source_rule_id=source_rule_id, target_rule_id=target_rule_id)
 
     def create_pricing_rule(self, payload: dict[str, Any]) -> dict[str, object]:
         return self._write(lambda: create_pricing_rule(self._session, **payload))
@@ -685,6 +662,174 @@ def create_model(session: Session, **payload: Any) -> dict[str, object]:
         group_ids=token_group_ids,
     )
     return {"id": str(model.id), "name": model.name, "pricing_configured": _pricing_configured(default_rules)}
+
+
+def _reuse_existing_model(
+    session: Session,
+    *,
+    model: Model,
+    token_group_ids: list[int] | None,
+    manual_rules: list[dict[str, Any]] | None,
+) -> dict[str, object]:
+    """复用已存在的同名模型，只为其缺失定价的目标分组补种方案。
+
+    同名模型可能已被其他渠道引用并绑定到不同令牌分组；批量创建不应重建模型，也不应改动已有
+    分组的定价，否则同一模型在其他渠道下的价格会被一并归档。
+    """
+
+    groups = _resolve_seed_groups(session, token_group_ids)
+    priced_group_ids = {
+        rule.token_group_id for rule in PricingRuleCrud(session).list_for_model(model.id) if rule.active
+    }
+    missing_group_ids = [group.id for group in groups if group.id not in priced_group_ids]
+    if missing_group_ids:
+        _seed_missing_group_pricing(session, model=model, group_ids=missing_group_ids, manual_rules=manual_rules)
+        # 会话未开启 autoflush，补种后先落库，保证下面的定价完整性判断能读到新增计费项。
+        PricingItemCrud(session).flush()
+    return {
+        "id": str(model.id),
+        "name": model.name,
+        "pricing_configured": _model_pricing_configured(session, model.id),
+    }
+
+
+def _seed_missing_group_pricing(
+    session: Session,
+    *,
+    model: Model,
+    group_ids: list[int],
+    manual_rules: list[dict[str, Any]] | None,
+) -> None:
+    """为已存在模型的缺失分组补种价格：优先提交的手动规则，其次复制已有分组的方案。"""
+
+    match = get_model_catalog().match(model.name)
+    if manual_rules is not None:
+        rules = _normalize_manual_pricing_rules(manual_rules)
+        if not _pricing_configured(rules):
+            raise ValidationError("请填写完整的计费项单价")
+        _seed_default_pricing_rules(
+            session,
+            model=model,
+            rules=rules,
+            modifiers=_long_context_modifiers(match.entry),
+            group_ids=group_ids,
+        )
+        return
+    source_rules = [rule for rule in PricingRuleCrud(session).list_for_model(model.id) if rule.active]
+    if source_rules:
+        _copy_pricing_rules_to_groups(session, model=model, source_rules=source_rules, group_ids=group_ids)
+        return
+    # 模型本身还没有任何价格：按模型模板与目录预设补种，与新建模型保持一致。
+    rules = (
+        _catalog_pricing_rules(match, _template_pricing_rules(model.template_id))
+        if match.entry is not None
+        else _template_pricing_rules(model.template_id)
+    )
+    _seed_default_pricing_rules(
+        session,
+        model=model,
+        rules=rules,
+        modifiers=_long_context_modifiers(match.entry),
+        group_ids=group_ids,
+    )
+
+
+def _copy_pricing_rules_to_groups(
+    session: Session,
+    *,
+    model: Model,
+    source_rules: list[PricingRule],
+    group_ids: list[int],
+) -> None:
+    """把模型已有的一套定价方案复制到缺失分组，保留优先级、条件、计费项与修正项。"""
+
+    source_group_id = _preferred_source_group_id(session, source_rules)
+    templates = [rule for rule in source_rules if rule.token_group_id == source_group_id]
+    if not templates:
+        return
+    rule_crud = PricingRuleCrud(session)
+    for group_id in group_ids:
+        for source_rule in templates:
+            rule = PricingRule(
+                model_id=model.id,
+                token_group_id=group_id,
+                name=source_rule.name,
+                priority=source_rule.priority,
+                conditions=deepcopy(source_rule.conditions),
+                currency=source_rule.currency,
+                active=source_rule.active,
+            )
+            rule_crud.add(rule)
+            rule_crud.flush()
+            _clone_pricing_rule_children(session, source_rule_id=source_rule.id, target_rule_id=rule.id)
+
+
+def _preferred_source_group_id(session: Session, rules: list[PricingRule]) -> int | None:
+    """选择用于复制的来源分组：优先系统默认分组，否则取规则列表中最小分组的方案。"""
+
+    if not rules:
+        return None
+    default_group = TokenGroupCrud(session).get_default_group()
+    if default_group is not None and any(rule.token_group_id == default_group.id for rule in rules):
+        return default_group.id
+    return min(rule.token_group_id for rule in rules)
+
+
+def _model_pricing_configured(session: Session, model_id: UUID) -> bool:
+    """判断模型当前是否存在带齐单价的定价方案。"""
+
+    rule_ids = [rule.id for rule in PricingRuleCrud(session).list_for_model(model_id)]
+    if not rule_ids:
+        return False
+    items = PricingItemCrud(session).list_for_rules(rule_ids)
+    if not items:
+        return False
+    return all(
+        item.unit_amount is not None for item in items if item.kind != PricingItemKind.input_video_duration.value
+    )
+
+
+def _clone_pricing_rule_children(session: Session, *, source_rule_id: UUID, target_rule_id: UUID) -> None:
+    """复制方案内的计费项与修正项，并把计费项之间的主键引用重映射到副本。"""
+
+    item_crud = PricingItemCrud(session)
+    source_items = item_crud.list_for_rule(source_rule_id)
+    item_id_map: dict[str, str] = {}
+    items: list[PricingItem] = []
+    for source_item in source_items:
+        item = PricingItem(
+            pricing_rule_id=target_rule_id,
+            label=source_item.label,
+            position=source_item.position,
+            kind=source_item.kind,
+            source_fields=list(source_item.source_fields),
+            estimate_config=deepcopy(source_item.estimate_config),
+            free_quantity=source_item.free_quantity,
+            unit_amount=source_item.unit_amount,
+            active=source_item.active,
+        )
+        item_id_map[str(source_item.id)] = str(item.id)
+        items.append(item)
+    for source_item, item in zip(source_items, items, strict=True):
+        if source_item.price_source_item_id is not None:
+            item.price_source_item_id = UUID(item_id_map[str(source_item.price_source_item_id)])
+    item_crud.add_many(items)
+    modifier_crud = PricingModifierCrud(session)
+    for source_modifier in modifier_crud.list_for_rule(source_rule_id):
+        modifier_crud.add(
+            PricingModifier(
+                pricing_rule_id=target_rule_id,
+                name=source_modifier.name,
+                priority=source_modifier.priority,
+                conditions=deepcopy(source_modifier.conditions),
+                effect_type=source_modifier.effect_type,
+                effect_payload=deepcopy(source_modifier.effect_payload),
+                scope_type=source_modifier.scope_type,
+                scope_item_ids=[item_id_map.get(item_id, item_id) for item_id in source_modifier.scope_item_ids],
+                scope_item_kinds=list(source_modifier.scope_item_kinds),
+                active=source_modifier.active,
+            )
+        )
 
 
 def _resolve_default_pricing_rules(

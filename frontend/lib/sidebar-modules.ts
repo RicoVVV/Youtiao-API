@@ -18,6 +18,7 @@ export const MODULE_LABEL_KEYS: Record<string, string> = {
   "api-keys": "nav.apiKeys",
   "usage-records": "nav.usageRecords",
   billing: "nav.billing",
+  affiliate: "nav.affiliate",
   profile: "nav.profile",
 };
 

@@ -1,14 +1,18 @@
 """多支付渠道共用的充值订单锁定、幂等结算和钱包入账流程。"""
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.modules.affiliate.application.services import AffiliateApplicationService
 from app.modules.membership.application.services import MembershipApplicationService
 from app.modules.payment.application.errors import PaymentBusinessError
 from app.modules.payment.crud.orders import PaymentCrud
 from app.modules.wallet.application.services import WalletApplicationService
-from app.modules.wallet.model import BalanceRecordType, RechargeOrderStatus, RechargeOrderType
+from app.modules.wallet.model import BalanceRecordType, RechargeOrder, RechargeOrderStatus, RechargeOrderType
 from sqlmodel import Session
+
+logger = logging.getLogger(__name__)
 
 
 class PaymentSettlementService:
@@ -48,6 +52,7 @@ class PaymentSettlementService:
         order.paid_at = datetime.now(UTC)
         if order.order_type == RechargeOrderType.membership:
             MembershipApplicationService(self._session).apply_purchase(order)
+            self._accrue_affiliate_rebate(order)
             return True
         WalletApplicationService(self._session).grant(
             user_id=order.user_id,
@@ -56,4 +61,14 @@ class PaymentSettlementService:
             reason=reason,
             recharge_order_id=order.id,
         )
+        self._accrue_affiliate_rebate(order)
         return True
+
+    def _accrue_affiliate_rebate(self, order: RechargeOrder) -> None:
+        """累计邀请返利；写入失败时上抛，由支付回调整体回滚并重试，避免静默丢失。"""
+
+        try:
+            AffiliateApplicationService(self._session).accrue_for_order(order)
+        except Exception:
+            logger.exception("邀请返利累计失败，订单结算将回滚", extra={"order_id": str(order.id)})
+            raise

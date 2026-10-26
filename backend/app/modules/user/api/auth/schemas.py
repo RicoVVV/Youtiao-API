@@ -20,6 +20,7 @@ class UserRegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=256)
     email: str | None = Field(default=None, max_length=320)
     verification_code: str | None = Field(default=None, min_length=6, max_length=6)
+    aff_code: str | None = Field(default=None, max_length=32, description="邀请返利码，可选")
 
 
 class EmailVerificationCodeRequest(BaseModel):

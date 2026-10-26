@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.database import dispose_async_database, dispose_database, get_session_factory
 from app.infrastructure.http.client import close_async_http_client
+from app.infrastructure.memory_maintenance import run_memory_maintenance
 from app.modules.channels.runtime.probe_task import ChannelHealthProbeSystemTaskRunner
 from app.modules.channels.runtime.routing_snapshot import RoutingSnapshotInvalidationSubscriber
 from app.modules.channels.runtime.sample_task import ChannelRuntimeSampleSystemTaskRunner
@@ -52,7 +53,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     参数：应用实例由 FastAPI 生命周期机制传入，当前不直接使用。
     返回值：向 FastAPI 提供生命周期上下文。
-    副作用：进程关闭时释放数据库连接池；数据库迁移由独立 Compose 服务执行。
+    副作用：启动支付配置同步、路由快照订阅与进程内存周期回收；进程关闭时释放数据库连接池。
+    数据库迁移由独立 Compose 服务执行。
     """
 
     settings = get_settings()
@@ -69,6 +71,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     routing_subscriber = RoutingSnapshotInvalidationSubscriber()
     routing_listener_task = asyncio.create_task(_listen_for_routing_snapshot_invalidations(routing_subscriber))
+    maintenance_tasks = [sync_task, routing_listener_task]
+    if settings.memory_maintenance_interval_seconds > 0:
+        # 每个 worker 各自维护自己的堆，因此回收任务必须按进程启动，不能只由系统任务领导实例执行。
+        maintenance_tasks.append(
+            asyncio.create_task(
+                run_memory_maintenance(settings.memory_maintenance_interval_seconds),
+                name="memory-maintenance",
+            )
+        )
     runtime = SystemTaskRuntime(
         [
             VideoPollSystemTaskRunner(),
@@ -85,9 +96,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        sync_task.cancel()
-        routing_listener_task.cancel()
-        await asyncio.gather(sync_task, routing_listener_task, return_exceptions=True)
+        for task in maintenance_tasks:
+            task.cancel()
+        await asyncio.gather(*maintenance_tasks, return_exceptions=True)
         await asyncio.to_thread(routing_subscriber.close)
         await runtime.stop()
         await close_async_http_client()

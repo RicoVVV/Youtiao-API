@@ -33,10 +33,22 @@ export type SystemSettings = {
   privacy_policy: string;
   /** 注册邮箱验证开关：true 时注册必须提供邮箱与验证码 */
   email_verification_enabled: boolean;
+  /** 邀请返利总开关：控制邀请返利入口与注册邀请码输入框展示 */
+  affiliate_enabled: boolean;
+  /** 被邀请人注册赠送额度（USD 字符串），0 表示不赠送 */
+  affiliate_signup_bonus: string;
 };
 
 /** 管理员系统设置：公开字段 + SMTP 配置（不返回密码明文/密文） */
 export type AdminSystemSettings = SystemSettings & {
+  /** 全局返利比例（百分比字符串，如 "20.00"） */
+  affiliate_rebate_rate_percent: string;
+  /** 返利冻结小时数，0 表示不冻结 */
+  affiliate_rebate_freeze_hours: number;
+  /** 被邀请人注册后的返利有效天数，0 表示永久 */
+  affiliate_rebate_duration_days: number;
+  /** 单个被邀请人的返利上限（USD 字符串），0 表示无上限 */
+  affiliate_rebate_per_invitee_cap: string;
   /** SMTP 服务器地址 */
   smtp_host: string;
   /** SMTP 端口，默认 587 */
@@ -74,7 +86,7 @@ export type AdminSystemSettings = SystemSettings & {
 /** 站点品牌字段全量更新请求体：除 logo_url 外均不可为 null */
 export type SystemSettingsUpdatePayload = Omit<
   SystemSettings,
-  "logo_url" | "email_verification_enabled"
+  "logo_url" | "email_verification_enabled" | "affiliate_enabled" | "affiliate_signup_bonus"
 > & {
   /** 传 null 清空徽标；填写时必须是 HTTP/HTTPS URL */
   logo_url: string | null;
@@ -122,6 +134,22 @@ export type ChannelAutomationUpdatePayload = {
   channel_auto_disable_keywords: string;
 };
 
+/** 邀请返利更新请求体（差异提交，仅传变更字段） */
+export type AffiliateUpdatePayload = {
+  /** 邀请返利总开关 */
+  affiliate_enabled: boolean;
+  /** 全局返利比例（百分比），0–100，可传数字或数字字符串 */
+  affiliate_rebate_rate_percent: number | string;
+  /** 返利冻结小时数，0–720，0 表示不冻结 */
+  affiliate_rebate_freeze_hours: number;
+  /** 被邀请人注册后产生返利的有效天数，0–3650，0 表示永久 */
+  affiliate_rebate_duration_days: number;
+  /** 单个被邀请人的返利上限（USD），≥ 0，0 表示无上限 */
+  affiliate_rebate_per_invitee_cap: number | string;
+  /** 被邀请人注册赠送额度（USD），0–1000000，0 表示不赠送 */
+  affiliate_signup_bonus: number | string;
+};
+
 /** 公开读取系统设置（无需登录） */
 export function getPublicSystemSettings() {
   return get<SystemSettings>("/system-settings/detail");
@@ -138,7 +166,8 @@ export function updateAdminSystemSettings(
     SystemSettingsUpdatePayload &
       EmailVerificationUpdatePayload &
       BalanceAlertUpdatePayload &
-      ChannelAutomationUpdatePayload
+      ChannelAutomationUpdatePayload &
+      AffiliateUpdatePayload
   >
 ) {
   return post<AdminSystemSettings>("/admin/system-settings/update", payload);

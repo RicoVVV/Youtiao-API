@@ -1,8 +1,9 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func, text
+from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field
 
@@ -112,5 +113,59 @@ class SystemSetting(SQLModelBase, table=True):
             nullable=False,
             server_default=text("'{}'::jsonb"),
             comment="控制台侧边栏分组与模块可见性覆盖，缺失键视为可见",
+        ),
+    )
+    affiliate_enabled: bool = Field(
+        default=False,
+        sa_column=Column(
+            Boolean,
+            nullable=False,
+            server_default="false",
+            comment="是否启用邀请返利功能，公开给注册页决定是否展示邀请码输入",
+        ),
+    )
+    affiliate_rebate_rate_percent: Decimal = Field(
+        default=Decimal("5.00"),
+        sa_column=Column(
+            Numeric(5, 2),
+            nullable=False,
+            server_default="5.00",
+            comment="全局邀请返利比例（百分比 0-100）",
+        ),
+    )
+    affiliate_rebate_freeze_hours: int = Field(
+        default=5,
+        sa_column=Column(
+            Integer,
+            nullable=False,
+            server_default="5",
+            comment="邀请返利冻结小时数，0 表示不冻结",
+        ),
+    )
+    affiliate_rebate_duration_days: int = Field(
+        default=0,
+        sa_column=Column(
+            Integer,
+            nullable=False,
+            server_default="0",
+            comment="被邀请人注册后产生返利的有效天数，0 表示永久有效",
+        ),
+    )
+    affiliate_rebate_per_invitee_cap: Decimal = Field(
+        default=Decimal("0"),
+        sa_column=Column(
+            Numeric(18, 6),
+            nullable=False,
+            server_default="0",
+            comment="单个被邀请人可产生的返利上限（USD），0 表示无上限",
+        ),
+    )
+    affiliate_signup_bonus: Decimal = Field(
+        default=Decimal("0"),
+        sa_column=Column(
+            Numeric(18, 6),
+            nullable=False,
+            server_default="0",
+            comment="通过邀请码或邀请链接注册的新用户赠送余额（USD），0 表示不赠送",
         ),
     )

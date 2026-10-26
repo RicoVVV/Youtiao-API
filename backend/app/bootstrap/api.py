@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.bootstrap.health import router as health_router
 from app.modules.admin.router import router as admin_router
+from app.modules.affiliate.api.router import router as affiliate_router
 from app.modules.api_docs.api.router import router as api_docs_router
 from app.modules.billing.api.router import router as billing_router
 from app.modules.generation.api.router import router as generation_router
@@ -49,6 +50,7 @@ def register_api_routes(app: FastAPI) -> None:
     app.include_router(usage_router, prefix="/api")
     app.include_router(billing_router, prefix="/api")
     app.include_router(wallet_router, prefix="/api")
+    app.include_router(affiliate_router, prefix="/api")
     app.include_router(payment_router, prefix="/api")
     app.include_router(membership_router, prefix="/api")
     app.include_router(system_settings_router, prefix="/api")

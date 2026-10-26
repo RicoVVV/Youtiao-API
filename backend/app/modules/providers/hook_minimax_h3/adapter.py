@@ -156,7 +156,9 @@ class H3VideoProvider:
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 stream=True,
             )
-            await response.aread()
+            if response.is_error:
+                # 仅错误响应读取错误体用于构造错误详情；成功路径保持流式，避免视频内容整体驻留 Worker 内存。
+                await response.aread()
             log_provider_response(response, provider_type=self.name, method="GET", url=url)
             status_error = provider_error_from_status(response)
             if status_error is not None:

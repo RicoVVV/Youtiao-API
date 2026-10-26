@@ -7,6 +7,7 @@ import {
   BellRing,
   Clapperboard,
   Cpu,
+  Gift,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -54,6 +55,7 @@ const MENU_GROUPS = [
     titleKey: "nav.account",
     items: [
       { href: "/console/billing", labelKey: "nav.billing", icon: Receipt, moduleKey: "billing" },
+      { href: "/console/affiliate", labelKey: "nav.affiliate", icon: Gift, moduleKey: "affiliate" },
       { href: "/console/profile", labelKey: "nav.profile", icon: UserRound, moduleKey: "profile" },
     ],
   },
