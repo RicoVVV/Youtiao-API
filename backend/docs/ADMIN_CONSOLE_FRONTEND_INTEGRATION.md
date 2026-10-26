@@ -36,7 +36,8 @@ All `/api/**` responses use:
 
 ### Error envelope
 
-`code` equals the HTTP status; `message` carries the reason:
+`code` equals the HTTP status; `message` carries the reason. `data` is `null` for most errors; the missing-pricing
+error described in B7 returns structured details in `data.unpriced`:
 
 ```json
 {
@@ -61,6 +62,7 @@ All `/api/**` responses use:
 | 8 | POST | `/api/admin/models/create` | Create a single local model. |
 | 9 | POST | `/api/admin/models/batch-match-preview` | Batch preview endpoint template and pricing. |
 | 10 | POST | `/api/admin/models/batch-create` | Batch create models. |
+| 11 | GET | `/api/admin/pricing-rules/preset` | Read a model's catalog preset pricing for manual rule creation. |
 
 ---
 
@@ -600,6 +602,19 @@ default group, or pass one or more group ids to seed a pricing rule copy into ea
 8. After success, add all created model names to the channel's `supported_models` and save the channel via
    `POST /api/admin/channels/update` (or include them in `POST /api/admin/channels/create` for a new channel).
 
+Saving a channel also backfills pricing for its bindings. For every model in `supported_models` and every active group in
+`token_group_ids` that has no pricing rule, the backend seeds one from the model's catalog preset (matched by model name).
+Prices are never copied from other token groups of the same model, so manually adjusted prices are not propagated
+implicitly. Groups that already have pricing are left untouched, and prices of groups removed from the channel are not
+deleted. Saving the same channel repeatedly is idempotent, so a channel can safely add a new token group later to receive
+its own preset-based pricing.
+
+If a model has no catalog preset, or the preset has no complete `unit_amount`, the save is rejected with `422` and a
+message like `模型“...”在令牌分组“...”没有默认定价，请先配置价格`. The error `data.unpriced` lists every affected model, its
+missing token groups and its `preset` (same shape as B8). Use it to open an inline pricing dialog on the current page,
+create the missing rules with `POST /api/admin/pricing-rules/create`, and then retry the channel save. The complete
+inline-dialog flow is documented in `CHANNEL_PRICING_INLINE_CONFIG_FRONTEND_INTEGRATION.md`.
+
 A single model can still be created via B6 when the operator does not need batch selection.
 
 ### Pricing display notes
@@ -609,3 +624,41 @@ A single model can still be created via B6 when the operator does not need batch
   and count/duration items are per unit. Always show the `currency` returned with the item.
 - Unmatched rows must be filled before batch creation; the backend rejects the whole batch if any row is missing
   prices, so no partially priced models are created.
+
+## B8. Model Preset Pricing
+
+| Method | Path | Parameters |
+|---|---|---|
+| GET | `/api/admin/pricing-rules/preset` | `model_id` (query, UUID, required) |
+
+Returns the catalog preset pricing matched by the model name, using the model's current template item layout. The
+endpoint is read-only and does not create or modify any pricing rule.
+
+| Field | Type | Description |
+|---|---|---|
+| `model_id` | string | Model ID. |
+| `model_name` | string | Model name. |
+| `matched` | boolean | Whether a catalog preset was matched. |
+| `match_type` | string | Name matching mode, for example `exact`. |
+| `template_id` | string \| null | Current model template. |
+| `model_type` | string | Model type. |
+| `currency` | string \| null | Preset currency; `null` when unmatched. |
+| `pricing_rules` | array | Preset rules in the same shape accepted by `POST /api/admin/pricing-rules/create`. |
+| `pricing_modifiers` | array | Preset long-context modifiers; create them separately via `POST /api/admin/pricing-modifiers/create` if needed. |
+| `pricing_fields` | string[] | Fields allowed for pricing conditions. |
+| `requires_pricing_input` | boolean | Whether the operator must fill unit amounts manually. |
+| `source_url` | string \| null | Preset price source. |
+| `price_updated_at` | string \| null | Preset price update time. |
+| `note` | string \| null | Preset price note. |
+
+Usage in the manual pricing rule dialog:
+
+1. Call this endpoint after the operator selects a model.
+2. When `matched = true`, prefill the form name, conditions, currency and `items[].unit_amount` from the first returned
+   rule; the operator can adjust values before saving. If several rules are returned, either let the operator pick one or
+   keep the current single-rule prefill.
+3. When `matched = false`, keep the template skeleton and leave unit amounts empty for manual input.
+4. Save with the existing `POST /api/admin/pricing-rules/create`; its request shape is unchanged.
+
+See `CHANNEL_PRICING_SEED_FRONTEND_INTEGRATION.md` for the complete Chinese integration guide.
+

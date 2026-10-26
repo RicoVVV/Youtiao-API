@@ -80,6 +80,19 @@ class PricingRuleCrud:
             )
         )
 
+    def list_for_models(self, model_ids: list[UUID]) -> list[PricingRule]:
+        """批量读取多个模型下的计费方案，供渠道保存时一次性判断分组定价覆盖情况。"""
+
+        if not model_ids:
+            return []
+        return list(
+            self._session.exec(
+                select(PricingRule)
+                .where(PricingRule.model_id.in_(model_ids))
+                .order_by(PricingRule.model_id, PricingRule.token_group_id, PricingRule.priority)
+            )
+        )
+
     def soft_delete_for_model(self, model_id: UUID) -> None:
         self._session.execute(
             update(PricingRule)

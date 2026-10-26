@@ -1,8 +1,9 @@
 """内置模型价格目录的数据定义。
 
-本模块只声明目录条目结构与三家厂商的常量数据，不承载匹配、查询或播种逻辑。
-所有单价取自厂商官方定价页的标准档位与短上下文档，单位为该厂商官方计价币种；
-条目附官方来源链接与价格核对日期，便于后续人工复核与调整。
+本模块只声明目录条目结构与各厂商的常量数据，不承载匹配、查询或播种逻辑。
+海外厂商条目取自官方定价页的标准档位与短上下文档，单位为该厂商官方计价币种；
+国内厂商条目同样取自官方人民币定价页，数字原样作为 CNY 单价记录，统一挂到
+OpenAI 兼容文本模板下。条目附官方来源链接与价格核对日期，便于后续人工复核与调整。
 """
 
 from dataclasses import dataclass, field
@@ -10,8 +11,14 @@ from dataclasses import dataclass, field
 OPENAI_SOURCE_URL = "https://developers.openai.com/api/docs/pricing"
 ANTHROPIC_SOURCE_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
 GOOGLE_SOURCE_URL = "https://ai.google.dev/gemini-api/docs/pricing"
+QWEN_SOURCE_URL = "https://help.aliyun.com/zh/model-studio/model-pricing"
+DOUBAO_SOURCE_URL = "https://ark.volcengine.com/region:cn-beijing/docs/model-pricing"
+DEEPSEEK_SOURCE_URL = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+KIMI_SOURCE_URL = "https://platform.kimi.com/docs/pricing/chat"
+GLM_SOURCE_URL = "https://docs.bigmodel.cn/cn/guide/start/pricing"
 
 PRICE_UPDATED_AT = "2026-09-16"
+DOMESTIC_PRICE_UPDATED_AT = "2026-10-26"
 
 _NO_CACHE_WRITE_NOTE = "官方未提供缓存写入单价，写入项按 0 播种"
 _NO_CACHED_INPUT_NOTE = "官方未提供缓存命中输入单价，命中项按 0 播种"
@@ -808,9 +815,231 @@ IMAGE_ENTRIES: tuple[ModelPricingEntry, ...] = (
     ),
 )
 
+_DOMESTIC_PRICE_SCOPE_NOTE = "单价取厂商国内人民币官方价，数字原样记为 CNY 单价"
+
+
+def _domestic(
+    canonical_name: str,
+    *,
+    source_url: str,
+    input_price: str,
+    cached_input_price: str,
+    output_price: str,
+    cache_write_price: str = "0.000000",
+    aliases: tuple[str, ...] = (),
+    long_context_threshold: int | None = None,
+    long_context_input_multiplier: str | None = None,
+    long_context_output_multiplier: str | None = None,
+    note: str | None = None,
+) -> ModelPricingEntry:
+    """构造国模文本条目，统一挂到 OpenAI 兼容文本模板。
+
+    国内厂商官方价以人民币公布，这里按人民币原价记录为 CNY 单价，不做汇率换算。
+    """
+
+    return ModelPricingEntry(
+        canonical_name=canonical_name,
+        template_id="openai_text_default",
+        model_type="text",
+        input_price=input_price,
+        cache_write_price=cache_write_price,
+        cached_input_price=cached_input_price,
+        output_price=output_price,
+        aliases=aliases,
+        currency="CNY",
+        source_url=source_url,
+        price_updated_at=DOMESTIC_PRICE_UPDATED_AT,
+        long_context_threshold=long_context_threshold,
+        long_context_input_multiplier=long_context_input_multiplier,
+        long_context_output_multiplier=long_context_output_multiplier,
+        note=f"{_DOMESTIC_PRICE_SCOPE_NOTE}；{note}" if note else _DOMESTIC_PRICE_SCOPE_NOTE,
+    )
+
+
+_GLM_CACHE_STORAGE_NOTE = "官方缓存按存储时长单独计费，平台无对应计费项，缓存写入项按 0 播种"
+_DOUBAO_CACHE_STORAGE_NOTE = "官方缓存存储按小时单独计费，平台无对应计费项，缓存写入项按 0 播种"
+
+
+DOMESTIC_ENTRIES: tuple[ModelPricingEntry, ...] = (
+    _domestic(
+        "qwen3.8-max",
+        source_url=QWEN_SOURCE_URL,
+        input_price="12.000000",
+        cache_write_price="15.000000",
+        cached_input_price="1.500000",
+        output_price="36.000000",
+        aliases=("qwen3.8-max-0902",),
+        note="显式缓存创建 15、隐式缓存命中 1.5",
+    ),
+    _domestic(
+        "qwen3.8-flash",
+        source_url=QWEN_SOURCE_URL,
+        input_price="0.800000",
+        cache_write_price="1.250000",
+        cached_input_price="0.100000",
+        output_price="2.700000",
+        note="显式缓存创建 1.25、隐式缓存命中 0.1",
+    ),
+    _domestic(
+        "qwen3.7-plus",
+        source_url=QWEN_SOURCE_URL,
+        input_price="2.000000",
+        cache_write_price="2.500000",
+        cached_input_price="0.400000",
+        output_price="8.000000",
+        long_context_threshold=256000,
+        long_context_input_multiplier="3.000000",
+        long_context_output_multiplier="3.000000",
+        note="输入超过 256K 时整单按输入 ×3、输出 ×3 计价，已播种分档加价",
+    ),
+    _domestic(
+        "doubao-seed-2.1-pro",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="6.000000",
+        cached_input_price="1.200000",
+        output_price="30.000000",
+        note=_DOUBAO_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "doubao-seed-2.1-lite",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="0.800000",
+        cached_input_price="0.160000",
+        output_price="2.700000",
+        note=_DOUBAO_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "doubao-seed-2.1-turbo",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="3.000000",
+        cached_input_price="0.600000",
+        output_price="15.000000",
+        note=_DOUBAO_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "doubao-seed-2.0-pro",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="3.200000",
+        cached_input_price="0.640000",
+        output_price="16.000000",
+        note="官方按输入长度分 0-32K / 32-128K / 128-256K 三档，此处取 0-32K 基准档",
+    ),
+    _domestic(
+        "doubao-seed-2.0-lite",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="0.600000",
+        cached_input_price="0.120000",
+        output_price="3.600000",
+        note="官方按输入长度分 0-32K / 32-128K / 128-256K 三档，此处取 0-32K 基准档",
+    ),
+    _domestic(
+        "doubao-seed-2.0-mini",
+        source_url=DOUBAO_SOURCE_URL,
+        input_price="0.200000",
+        cached_input_price="0.040000",
+        output_price="2.000000",
+        note="官方按输入长度分 0-32K / 32-128K / 128-256K 三档，此处取 0-32K 基准档",
+    ),
+    _domestic(
+        "deepseek-v4-pro",
+        source_url=DEEPSEEK_SOURCE_URL,
+        input_price="9.000000",
+        cached_input_price="0.300000",
+        output_price="27.000000",
+        note="官方区分高峰与空闲时段，此处取高峰价（空闲价为高峰价一半）",
+    ),
+    _domestic(
+        "deepseek-flash",
+        source_url=DEEPSEEK_SOURCE_URL,
+        input_price="2.000000",
+        cached_input_price="0.040000",
+        output_price="8.000000",
+        aliases=("deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"),
+        note="官方区分高峰与空闲时段，此处取高峰价（空闲价为高峰价一半）",
+    ),
+    _domestic(
+        "kimi-k3.1-pro",
+        source_url=KIMI_SOURCE_URL,
+        input_price="13.000000",
+        cache_write_price="13.000000",
+        cached_input_price="1.300000",
+        output_price="68.000000",
+        aliases=("kimi-3.1-pro",),
+        note="缓存写入取 5min TTL 档，1h TTL 为 26",
+    ),
+    _domestic(
+        "kimi-k3",
+        source_url=KIMI_SOURCE_URL,
+        input_price="20.000000",
+        cache_write_price="20.000000",
+        cached_input_price="2.000000",
+        output_price="100.000000",
+        note="缓存写入取 5min TTL 档，1h TTL 为 40",
+    ),
+    _domestic(
+        "kimi-k2.7-code",
+        source_url=KIMI_SOURCE_URL,
+        input_price="6.500000",
+        cached_input_price="1.300000",
+        output_price="27.000000",
+        note="官方未公布缓存写入单价，写入项按 0 播种",
+    ),
+    _domestic(
+        "kimi-k2.6",
+        source_url=KIMI_SOURCE_URL,
+        input_price="6.500000",
+        cached_input_price="1.100000",
+        output_price="27.000000",
+        note="官方未公布缓存写入单价，写入项按 0 播种",
+    ),
+    _domestic(
+        "glm-5.3",
+        source_url=GLM_SOURCE_URL,
+        input_price="8.000000",
+        cached_input_price="2.000000",
+        output_price="28.000000",
+        note=_GLM_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "glm-5.3-flash",
+        source_url=GLM_SOURCE_URL,
+        input_price="0.800000",
+        cached_input_price="0.230000",
+        output_price="2.800000",
+        note=_GLM_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "glm-5.2",
+        source_url=GLM_SOURCE_URL,
+        input_price="8.000000",
+        cached_input_price="2.000000",
+        output_price="28.000000",
+        note=_GLM_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "glm-5.1",
+        source_url=GLM_SOURCE_URL,
+        input_price="6.000000",
+        cached_input_price="1.300000",
+        output_price="24.000000",
+        note="输入超过 32K 时官方为输入 8 / 输出 28，此处取 0-32K 档；" + _GLM_CACHE_STORAGE_NOTE,
+    ),
+    _domestic(
+        "glm-4.7",
+        source_url=GLM_SOURCE_URL,
+        input_price="3.000000",
+        cached_input_price="0.600000",
+        output_price="14.000000",
+        note="官方按输入与输出长度分档，此处取输入 32K 内、输出 0.2K 以上档（输入 3 / 输出 14）；"
+        + _GLM_CACHE_STORAGE_NOTE,
+    ),
+)
+
+
 CATALOG_ENTRIES: tuple[ModelPricingEntry, ...] = (
     *OPENAI_ENTRIES,
     *ANTHROPIC_ENTRIES,
     *GOOGLE_ENTRIES,
     *IMAGE_ENTRIES,
+    *DOMESTIC_ENTRIES,
 )

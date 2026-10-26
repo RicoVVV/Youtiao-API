@@ -17,10 +17,12 @@ class ApplicationError(Exception):
         *,
         code: str | None = None,
         params: Mapping[str, Any] | None = None,
+        data: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.params: dict[str, Any] = dict(params) if params else {}
+        self.data = data
 
 
 class AuthenticationError(ApplicationError):

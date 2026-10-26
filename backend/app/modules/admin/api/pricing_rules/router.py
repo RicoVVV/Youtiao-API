@@ -67,6 +67,13 @@ def list_pricing_rules(
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/preset", dependencies=[Depends(get_admin_user_id)], summary="查询模型预设价格")
+def get_pricing_preset(
+    model_id: Annotated[UUID, Query()], session: Annotated[Session, Depends(get_db)]
+) -> dict[str, object]:
+    return AdminModelConfigApplicationService(session).get_pricing_preset(model_id)
+
+
 @router.get("/detail", dependencies=[Depends(get_admin_user_id)], summary="查询计费规则详情")
 def get_pricing_rule(
     pricing_rule_id: Annotated[UUID, Query()], session: Annotated[Session, Depends(get_db)]

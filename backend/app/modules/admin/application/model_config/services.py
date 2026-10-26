@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -411,6 +411,11 @@ class AdminModelConfigApplicationService:
             raise NotFoundError("价格规则不存在")
         return _pricing_rule_view(rule, items=PricingItemCrud(self._session).list_for_rule(rule.id))
 
+    def get_pricing_preset(self, model_id: UUID) -> dict[str, object]:
+        """读取模型名匹配到的目录预设定价，供手动创建计费规则时自动填充。"""
+
+        return _model_pricing_preset(_get_live_model(self._session, model_id))
+
     def copy_pricing_rule(self, payload: dict[str, Any]) -> dict[str, object]:
         return self._write(lambda: self._copy_pricing_rule(payload["pricing_rule_id"]))
 
@@ -574,6 +579,7 @@ def create_channel(session: Session, **payload: Any) -> dict[str, object]:
     channel_crud.add(channel)
     channel_crud.flush()
     _sync_channel_routes(session, channel)
+    _seed_channel_model_pricing(session, channel)
     return {"id": str(channel.id)}
 
 
@@ -593,6 +599,7 @@ def update_channel(session: Session, *, channel_id: UUID, **payload: Any) -> dic
         channel.auto_disabled_at = None
     _validate_channel(channel)
     _sync_channel_routes(session, channel)
+    _seed_channel_model_pricing(session, channel)
     if reset_runtime:
         _reset_channel_route_runtime(session, channel_id)
     return {"id": str(channel.id)}
@@ -671,19 +678,24 @@ def _reuse_existing_model(
     token_group_ids: list[int] | None,
     manual_rules: list[dict[str, Any]] | None,
 ) -> dict[str, object]:
-    """复用已存在的同名模型，只为其缺失定价的目标分组补种方案。
+    """复用已存在的同名模型，只为其缺失定价的目标分组按预设补种方案。
 
     同名模型可能已被其他渠道引用并绑定到不同令牌分组；批量创建不应重建模型，也不应改动已有
-    分组的定价，否则同一模型在其他渠道下的价格会被一并归档。
+    分组的定价。缺失分组按目录预设价格播种，没有预设时提示管理员填写，不从其他分组复制价格。
     """
 
     groups = _resolve_seed_groups(session, token_group_ids)
-    priced_group_ids = {
-        rule.token_group_id for rule in PricingRuleCrud(session).list_for_model(model.id) if rule.active
-    }
+    priced_group_ids = {rule.token_group_id for rule in PricingRuleCrud(session).list_for_model(model.id)}
     missing_group_ids = [group.id for group in groups if group.id not in priced_group_ids]
     if missing_group_ids:
-        _seed_missing_group_pricing(session, model=model, group_ids=missing_group_ids, manual_rules=manual_rules)
+        unresolved_group_ids = _seed_missing_group_pricing(
+            session,
+            model=model,
+            group_ids=missing_group_ids,
+            manual_rules=manual_rules,
+        )
+        if unresolved_group_ids:
+            _raise_missing_default_pricing_error([(model, unresolved_group_ids)])
         # 会话未开启 autoflush，补种后先落库，保证下面的定价完整性判断能读到新增计费项。
         PricingItemCrud(session).flush()
     return {
@@ -699,32 +711,25 @@ def _seed_missing_group_pricing(
     model: Model,
     group_ids: list[int],
     manual_rules: list[dict[str, Any]] | None,
-) -> None:
-    """为已存在模型的缺失分组补种价格：优先提交的手动规则，其次复制已有分组的方案。"""
+) -> list[int]:
+    """为缺失分组按预设价格播种，返回无法补种的分组。
+
+    优先使用本次提交的手动规则，其次使用模型名命中的目录预设价格；没有预设或预设缺少单价时
+    不写库，由调用方提示管理员先填写价格。不从其他分组复制已启用价格，避免把人工调整过的价格
+    隐式带到其他分组。
+    """
 
     match = get_model_catalog().match(model.name)
     if manual_rules is not None:
         rules = _normalize_manual_pricing_rules(manual_rules)
         if not _pricing_configured(rules):
             raise ValidationError("请填写完整的计费项单价")
-        _seed_default_pricing_rules(
-            session,
-            model=model,
-            rules=rules,
-            modifiers=_long_context_modifiers(match.entry),
-            group_ids=group_ids,
-        )
-        return
-    source_rules = [rule for rule in PricingRuleCrud(session).list_for_model(model.id) if rule.active]
-    if source_rules:
-        _copy_pricing_rules_to_groups(session, model=model, source_rules=source_rules, group_ids=group_ids)
-        return
-    # 模型本身还没有任何价格：按模型模板与目录预设补种，与新建模型保持一致。
-    rules = (
-        _catalog_pricing_rules(match, _template_pricing_rules(model.template_id))
-        if match.entry is not None
-        else _template_pricing_rules(model.template_id)
-    )
+    elif match.entry is not None:
+        rules = _catalog_pricing_rules(match, _template_pricing_rules(model.template_id))
+        if not _pricing_configured(rules):
+            return list(group_ids)
+    else:
+        return list(group_ids)
     _seed_default_pricing_rules(
         session,
         model=model,
@@ -732,47 +737,7 @@ def _seed_missing_group_pricing(
         modifiers=_long_context_modifiers(match.entry),
         group_ids=group_ids,
     )
-
-
-def _copy_pricing_rules_to_groups(
-    session: Session,
-    *,
-    model: Model,
-    source_rules: list[PricingRule],
-    group_ids: list[int],
-) -> None:
-    """把模型已有的一套定价方案复制到缺失分组，保留优先级、条件、计费项与修正项。"""
-
-    source_group_id = _preferred_source_group_id(session, source_rules)
-    templates = [rule for rule in source_rules if rule.token_group_id == source_group_id]
-    if not templates:
-        return
-    rule_crud = PricingRuleCrud(session)
-    for group_id in group_ids:
-        for source_rule in templates:
-            rule = PricingRule(
-                model_id=model.id,
-                token_group_id=group_id,
-                name=source_rule.name,
-                priority=source_rule.priority,
-                conditions=deepcopy(source_rule.conditions),
-                currency=source_rule.currency,
-                active=source_rule.active,
-            )
-            rule_crud.add(rule)
-            rule_crud.flush()
-            _clone_pricing_rule_children(session, source_rule_id=source_rule.id, target_rule_id=rule.id)
-
-
-def _preferred_source_group_id(session: Session, rules: list[PricingRule]) -> int | None:
-    """选择用于复制的来源分组：优先系统默认分组，否则取规则列表中最小分组的方案。"""
-
-    if not rules:
-        return None
-    default_group = TokenGroupCrud(session).get_default_group()
-    if default_group is not None and any(rule.token_group_id == default_group.id for rule in rules):
-        return default_group.id
-    return min(rule.token_group_id for rule in rules)
+    return []
 
 
 def _model_pricing_configured(session: Session, model_id: UUID) -> bool:
@@ -1273,6 +1238,36 @@ def _match_preview(
     preview["pricing_fields"] = _merge_pricing_fields(contract, [], rules)
     preview["input_schema"] = _contract_input_schema(contract)
     return preview
+
+
+def _model_pricing_preset(model: Model) -> dict[str, object]:
+    """构造已存在模型的目录预设价格视图，供手动创建计费规则时自动应用。
+
+    只返回模型名命中的目录预设价格；未命中时 ``pricing_rules`` 为空，由前端保留模板骨架并要求
+    管理员填写单价。预设价格按模型当前模板的计费项口径覆盖，不会改动既有定价规则。
+    """
+
+    match = get_model_catalog().match(model.name)
+    preset_entry = match.entry
+    rules = (
+        _catalog_pricing_rules(match, _template_pricing_rules(model.template_id)) if preset_entry is not None else []
+    )
+    return {
+        "model_id": str(model.id),
+        "model_name": model.name,
+        "matched": preset_entry is not None,
+        "match_type": match.match_type,
+        "template_id": model.template_id,
+        "model_type": model.model_type,
+        "currency": preset_entry.currency if preset_entry is not None else None,
+        "pricing_rules": rules,
+        "pricing_modifiers": _long_context_modifiers(preset_entry),
+        "pricing_fields": _merge_pricing_fields(model.input_contract, list(model.pricing_fields or []), rules),
+        "requires_pricing_input": preset_entry is None or not _pricing_configured(rules),
+        "source_url": preset_entry.source_url if preset_entry is not None else None,
+        "price_updated_at": preset_entry.price_updated_at if preset_entry is not None else None,
+        "note": preset_entry.note if preset_entry is not None else None,
+    }
 
 
 def update_model(session: Session, *, model_id: UUID, **payload: Any) -> dict[str, object]:
@@ -1930,6 +1925,70 @@ def _sync_channel_routes(session: Session, channel: Channel) -> None:
             route.weight = channel.weight
             route.enabled = channel.active
             route.healthy = channel.healthy
+
+
+def _seed_channel_model_pricing(session: Session, channel: Channel) -> None:
+    """为渠道引用的模型补齐各令牌分组的预设定价方案。
+
+    渠道保存可能引入新的令牌分组，而计费方案按 (模型, 令牌分组) 隔离；这里只为缺少定价规则的
+    分组按目录预设价格播种，已有分组的价格不受影响，也不会删除渠道移除分组后的历史价格。
+    模型没有可用预设价格时，保存失败并提示管理员先填写价格。
+    """
+
+    group_ids = _active_group_ids(session, list(channel.token_group_ids))
+    if not group_ids or not channel.supported_models:
+        return
+    models = [model for model in ModelCrud(session).list_by_names(channel.supported_models) if model.active]
+    priced_by_model: dict[UUID, set[int]] = {}
+    for rule in PricingRuleCrud(session).list_for_models([model.id for model in models]):
+        priced_by_model.setdefault(rule.model_id, set()).add(rule.token_group_id)
+    unpriced: list[tuple[Model, list[int]]] = []
+    for model in models:
+        priced_group_ids = priced_by_model.get(model.id, set())
+        missing_group_ids = [group_id for group_id in group_ids if group_id not in priced_group_ids]
+        if not missing_group_ids:
+            continue
+        unresolved_group_ids = _seed_missing_group_pricing(
+            session,
+            model=model,
+            group_ids=missing_group_ids,
+            manual_rules=None,
+        )
+        if unresolved_group_ids:
+            unpriced.append((model, unresolved_group_ids))
+    if unpriced:
+        _raise_missing_default_pricing_error(unpriced)
+
+
+def _raise_missing_default_pricing_error(items: list[tuple[Model, list[int]]]) -> NoReturn:
+    """抛出模型缺少默认定价的业务异常。
+
+    ``data.unpriced`` 携带每个模型的缺失分组与预设价格，前端可在当前页面直接弹出配置弹窗。
+    """
+
+    names = list(dict.fromkeys(model.name for model, _ in items))
+    group_ids = list(dict.fromkeys(group_id for _, groups in items for group_id in groups))
+    model_names = "、".join(names)
+    group_labels = "、".join(str(group_id) for group_id in group_ids)
+    raise ValidationError(
+        f"模型“{model_names}”在令牌分组“{group_labels}”没有默认定价，请先配置价格",
+        code="pricing.default_missing",
+        params={
+            "models": model_names,
+            "groups": group_labels,
+        },
+        data={
+            "unpriced": [
+                {
+                    "model_id": str(model.id),
+                    "model_name": model.name,
+                    "token_group_ids": list(missing_group_ids),
+                    "preset": _model_pricing_preset(model),
+                }
+                for model, missing_group_ids in items
+            ]
+        },
+    )
 
 
 def _channel_view(channel: Channel, *, groups_by_id: dict[int, TokenGroup] | None = None) -> dict[str, object]:

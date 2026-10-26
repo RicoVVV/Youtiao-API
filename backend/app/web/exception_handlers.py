@@ -333,7 +333,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             )
         return JSONResponse(
             status_code=422,
-            content=response_body(422, translate_error(exc), None, get_request_id()),
+            content=response_body(422, translate_error(exc), getattr(exc, "data", None), get_request_id()),
             headers=_response_headers(),
         )
 

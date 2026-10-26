@@ -763,6 +763,9 @@ CODE_MESSAGES: dict[str, str] = {
     # 渠道运行时与趋势
     "channel.trend_hours_exceeded": "The trend range cannot exceed {hours} hours",
     # 计费方案与报价
+    "pricing.default_missing": (
+        "No default pricing for model(s) {models} in token group(s) {groups}; configure pricing first"
+    ),
     "pricing_plan.duplicate_position": "Duplicate {label} position",
     "pricing_plan.material_field_unsupported_kind": (
         "The pricing item metering source field does not support {category} materials"
